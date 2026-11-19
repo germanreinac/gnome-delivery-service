@@ -1,16 +1,16 @@
 # Gnome Delivery Service
 
-A sewer-running delivery game. You are a gnome courier with a roll of toilet paper roped to your back.
+A 3D sewer-running delivery game. You are a gnome courier with a roll of toilet paper roped to your back.
 Someone upstairs has run out. Get the roll through the pipes to their bathroom before they give up.
 
 ## Play
 
-Open `index.html` in a browser. No build step, no dependencies.
+Open `index.html` in a browser. No build step; three.js loads from a CDN. The earlier 2D side-scroller is in `2d/`.
 
 | Action | Keyboard | Touch |
 | --- | --- | --- |
-| Run | ← → or A D | ◀ ▶ |
-| Jump | Space, ↑ or W | Jump |
+| Move | W A S D or arrows | Thumb stick |
+| Jump | Space | Jump |
 | Plunger whack | X or J | Whack |
 | Continue | Enter | Tap the screen |
 
@@ -21,4 +21,4 @@ Open `index.html` in a browser. No build step, no dependencies.
 - Rats patrol and charge, cockroaches skitter, cloglings (hair-clog blobs) hop at you.
 - Spare rolls along the way restore 3 sheets.
 
-Levels are data at the top of `game.js` (`LEVELS`): ground runs, floating pipes, and a list of things to place.
+Each level is one long bent pipe, described as data at the top of `game.js` (`LEVELS`): the path's bends and slopes, pits, bridges and crates, and a list of things to place. Gameplay runs in pipe coordinates (distance along, sideways, height), which are then wrapped onto the curve.

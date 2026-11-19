@@ -7,7 +7,7 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800&display=swap">
 <style>
-/* Layout: one screen. Thin sign-board header, the sewer viewport fills the rest, thumb controls dock underneath on touch. */
+/* Layout: one screen. Thin sign-board header, the pipe view fills everything else, thumb controls float over its bottom corners on touch. */
 :root {
   color-scheme: dark;
   --sewer: #10201f;        /* page ground: wet pipe dark */
@@ -36,7 +36,8 @@ body {
   overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
-  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  touch-action: none;
 }
 header {
   display: flex;
@@ -66,38 +67,44 @@ h1 span { color: var(--hat); }
 .stage {
   flex: 1;
   min-height: 0;
-  container-type: size;
-  display: grid;
-  place-items: center;
-}
-canvas {
-  display: block;
-  width: min(100cqw, 100cqh * 16 / 9);
-  aspect-ratio: 16 / 9;
-  max-width: 100%;
+  position: relative;
   border: 2px solid var(--pipe);
   border-radius: 6px;
+  overflow: hidden;
   background: #0b1716;
 }
-.pad { display: none; justify-content: space-between; gap: 16px; }
-.pad div { display: flex; gap: 10px; }
-.pad button {
-  font-family: var(--display);
-  font-size: 1.1rem;
-  color: var(--paper);
-  background: var(--sewer-raised);
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hud { pointer-events: none; }
+.pad { display: none; }
+.stick, .pad button {
+  position: absolute;
+  bottom: 18px;
+  background: rgba(27, 51, 49, 0.6);
   border: 2px solid var(--pipe);
-  border-radius: 14px;
-  min-width: 64px;
-  height: 60px;
-  padding: 0 14px;
+  color: var(--paper);
   touch-action: none;
 }
+.stick { left: 18px; width: 124px; height: 124px; border-radius: 50%; }
+.stick i {
+  position: absolute; left: 50%; top: 50%;
+  width: 52px; height: 52px; margin: -26px;
+  border-radius: 50%;
+  background: var(--paper);
+  opacity: 0.85;
+}
+.pad button {
+  font-family: var(--display);
+  font-size: 1rem;
+  width: 76px; height: 76px;
+  border-radius: 50%;
+  padding: 0;
+}
+#btn-jump { right: 18px; }
+#btn-whack { right: 104px; bottom: 58px; border-color: var(--hat); }
 .pad button.on { background: var(--pipe); }
-.pad button.whack { border-color: var(--hat); }
 .pad button:focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
 @media (pointer: coarse) {
-  .pad { display: flex; }
+  .pad { display: block; }
   .keys { display: none; }
 }
 </style>
@@ -105,19 +112,18 @@ canvas {
 <body>
 <header>
   <h1>Gnome <span>Delivery</span> Service</h1>
-  <p class="keys"><kbd>←</kbd> <kbd>→</kbd> run · <kbd>Space</kbd> jump · <kbd>X</kbd> plunger whack · <kbd>Enter</kbd> continue</p>
+  <p class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows move · <kbd>Space</kbd> jump · <kbd>X</kbd> plunger whack · <kbd>Enter</kbd> continue</p>
 </header>
-<div class="stage"><canvas id="game" width="960" height="540" aria-label="Gnome Delivery Service game"></canvas></div>
-<div class="pad">
-  <div>
-    <button type="button" id="btn-left" data-key="left" aria-label="Run left">◀</button>
-    <button type="button" id="btn-right" data-key="right" aria-label="Run right">▶</button>
-  </div>
-  <div>
-    <button type="button" id="btn-whack" class="whack" data-key="attack">Whack</button>
+<div class="stage" id="stage">
+  <canvas id="view" aria-label="Gnome Delivery Service game"></canvas>
+  <canvas id="hud"></canvas>
+  <div class="pad">
+    <div class="stick" id="stick" role="group" aria-label="Move"><i></i></div>
+    <button type="button" id="btn-whack" data-key="attack">Whack</button>
     <button type="button" id="btn-jump" data-key="jump">Jump</button>
   </div>
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="game.js"></script>
 </body>
 </html>
