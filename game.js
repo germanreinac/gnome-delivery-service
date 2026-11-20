@@ -161,7 +161,7 @@ function generate(seed) {
   points.forEach((p, n) => Object.assign(p, { x: p.i * TS, z: p.j * TS, letter: 'ABCDEF'[n], name: ADDRESSES[n], order: null }));
   // gym ducts for the back-room packages, spaced away from everything else
   const drops = []; points.push({ i: 5, j: 5 }); // count the back room too, so a duct is never next door to it
-  for (const name of ['Iron Temple Gym', 'Pump House Gym']) { const b = spread(deadEnds) || spread(cells); if (!b) break; used.add(b[0] + ',' + b[1]);
+  for (const name of ['Iron Temple Gym', 'Pump House Gym']) { const b = spread(cells); if (!b) break; used.add(b[0] + ',' + b[1]);
     const d = { i: b[0], j: b[1], x: b[0] * TS, z: b[1] * TS, name }; drops.push(d); points.push(d); }
   points.length -= drops.length + 1;
   // vents: holes through walls where the walk around is long
