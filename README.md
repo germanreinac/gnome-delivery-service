@@ -31,6 +31,13 @@ Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the 
   - Pipe: a smoke ring rolls forward and shoves creatures back, into sewage if it is there.
   - Cigar: a thick cloud. Creatures inside choke, and cannot see you while you stand in it.
   - Joint: a haze that leaves nearby creatures too mellow to chase or bite for a while.
+- The back room (purple on the map) hands out steroid packages for one of two gym ducts: 25 tips, and it does not count
+  towards the shift. The duct is narrow, so the roll must be 6 sheets or fewer to post it. Carrying one draws humans faster.
+- Mob gnomes in black hats hold a den and patrol. They stop, wind up and lunge with a knife: 3 sheets, and they take the
+  package. Beat one and it drops its knife, which swings faster and hits twice as hard as the plunger.
+- Humans above hunt you now and then: a reticle follows you, freezes, and a shot lands there (3 sheets), four times,
+  then a hand comes down to grab you. Keep moving, or stand in a vent or cigar smoke until they lose you.
+  Shots also kill any creature standing under them.
 - Hit with an empty roll and you are dragged back to the depot and lose 5 tips.
 - The camera rides low behind the gnome and swings round to follow. Movement is relative to it: up is away from the camera.
   Lettered markers for open orders show through the walls as a rough bearing.
