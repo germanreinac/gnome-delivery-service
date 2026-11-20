@@ -1,5 +1,5 @@
 /* Gnome Delivery Service — 3D prototype (three.js r128).
-   An open sewer labyrinth seen from a raised camera, pipes cut away so you can see into them.
+   An open sewer labyrinth, seen from just behind the gnome. The camera swings round to follow where they run.
    Core loop: stock up at the depot, pick which orders to run, find your own route, come back.
    The roll on the gnome's back is cargo, health, ammo and the key to the vents all at once:
      - each order takes some sheets off it
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 
-const TS = 3.2, WALL_H = 1.6;            // tile size, wall height
+const TS = 3.2, WALL_H = 3.2;            // tile size, wall height
 const CW = 10, CH = 8, W = CW * 2 + 1, H = CH * 2 + 1; // maze cells and tile grid
 const GRAV = 22, RUN = 6.5, JUMP = 8, RADIUS = 0.42;
 const MAX_SHEETS = 12, VENT_MAX = 6, TOTAL_ORDERS = 8, MAX_ACTIVE = 3;
@@ -33,19 +33,19 @@ const hudCanvas = document.getElementById('hud');
 const ctx = hudCanvas.getContext('2d');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a1615);
-scene.fog = new THREE.Fog(0x0a1615, 22, 60);
+scene.fog = new THREE.Fog(0x0a1615, 8, 40);
 const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.1, 140);
 scene.add(new THREE.HemisphereLight(0xb8e8d8, 0x2c3a24, 0.7));
 const sun = new THREE.DirectionalLight(0xfff2d0, 0.35); sun.position.set(-4, 10, 6); scene.add(sun);
-const lantern = new THREE.PointLight(0xffe2b0, 0.9, 20);
+const lantern = new THREE.PointLight(0xffe2b0, 1.1, 22);
 scene.add(lantern);
 
-let LW = 960, LH = 540, camFar = 1; // HUD logical size, camera pull-back factor
+let LW = 960, LH = 540; // HUD logical size
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
   if (!w || !h) return;
   renderer.setPixelRatio(dpr); renderer.setSize(w, h, false);
-  camera.aspect = w / h; camFar = w < h ? 1.45 : 1; camera.updateProjectionMatrix();
+  camera.aspect = w / h; camera.fov = w < h ? 82 : 62; camera.updateProjectionMatrix();
   const k = Math.max(0.75, Math.min(w / 960, h / 540));
   LW = w / k; LH = h / k;
   hudCanvas.width = w * dpr; hudCanvas.height = h * dpr;
@@ -89,7 +89,8 @@ const ventTex = canvasTexture(64, (g, n) => {
 const lam = (color, extra) => new THREE.MeshLambertMaterial(Object.assign({ color }, extra));
 const DS2 = { side: THREE.DoubleSide };
 const M = {
-  wall: lam(0xffffff, { map: brickTex, ...DS2 }), top: lam(0x1d2c2a, DS2), floor: lam(0xffffff, { map: floorTex, ...DS2 }),
+  // walls and rock tops are one-sided on purpose: the camera can sit inside the rock and see out through them
+  wall: lam(0xffffff, { map: brickTex }), curb: lam(0xffffff, { map: brickTex, ...DS2 }), top: lam(0x1d2c2a), floor: lam(0xffffff, { map: floorTex, ...DS2 }),
   sewage: lam(0xffffff, { map: sewageTex, emissive: 0x2c3c12, ...DS2 }), vent: lam(0xffffff, { map: ventTex, ...DS2 }), steel: lam(0x9aa8a8),
   copper: lam(0xb7743c), crate: lam(0x9a6b3c), porcelain: lam(0xf1eee4, DS2),
   paper: lam(0xf7f4ea, DS2), rope: lam(0x7a5230), card: lam(0xa98258),
@@ -186,11 +187,11 @@ function buildWorld() {
   const hs = TS / 2, U = TS / 4;
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     const c = grid[j][i], x = i * TS, z = j * TS, y = c === '#' ? WALL_H : c === '~' ? -0.4 : 0;
-    quad(c === '#' ? 'top' : c === '~' ? 'sewage' : c === 'v' ? 'vent' : 'floor', [x - hs, y, z - hs], [x + hs, y, z - hs], [x + hs, y, z + hs], [x - hs, y, z + hs], c === 'v' ? 2 : U, c === 'v' ? 2 : U);
+    quad(c === '#' ? 'top' : c === '~' ? 'sewage' : c === 'v' ? 'vent' : 'floor', [x - hs, y, z + hs], [x + hs, y, z + hs], [x + hs, y, z - hs], [x - hs, y, z - hs], c === 'v' ? 2 : U, c === 'v' ? 2 : U);
     if (c === '#' || c === '~') for (const [dx, dz] of DIRS) { // side faces towards anything lower
       const n = grid[j + dz] && grid[j + dz][i + dx]; if (!n || n === '#' || (c === '~' && n === '~')) continue;
-      const cx = x + dx * hs, cz = z + dz * hs, ex = dz * hs, ez = dx * hs, y0 = c === '#' ? (n === '~' ? -0.4 : 0) : -0.4, y1 = c === '#' ? WALL_H : 0;
-      quad('wall', [cx - ex, y0, cz - ez], [cx + ex, y0, cz + ez], [cx + ex, y1, cz + ez], [cx - ex, y1, cz - ez], U, (y1 - y0) / 4);
+      const cx = x + dx * hs, cz = z + dz * hs, ex = dz * hs, ez = -dx * hs, y0 = c === '#' ? (n === '~' ? -0.4 : 0) : -0.4, y1 = c === '#' ? WALL_H : 0;
+      quad(c === '#' ? 'wall' : 'curb', [cx - ex, y0, cz - ez], [cx + ex, y0, cz + ez], [cx + ex, y1, cz + ez], [cx - ex, y1, cz - ez], U, (y1 - y0) / 4);
     }
     if (c === '#' && (i * 7 + j * 13) % 6 === 0 && i > 0 && j > 0 && i < W - 1 && j < H - 1) { // service pipes lying on the rock
       const pipe = mesh(new THREE.CylinderGeometry(0.22, 0.22, TS, 10), M.copper, x, WALL_H + 0.2, z); pipe.rotation[(i + j) % 2 ? 'x' : 'z'] = Math.PI / 2; g.add(pipe);
@@ -199,12 +200,12 @@ function buildWorld() {
       const alongX = open(grid[j][i - 1]);
       for (const sgn of [-1, 1]) {
         const f = new THREE.Group(); f.position.set(x + (alongX ? sgn * hs : 0), 0, z + (alongX ? 0 : sgn * hs)); if (alongX) f.rotation.y = Math.PI / 2;
-        f.add(box(TS, 0.5, 0.3, M.steel, 0, 1.35, 0), box(0.3, 1.6, 0.3, M.steel, -hs + 0.15, 0.8, 0), box(0.3, 1.6, 0.3, M.steel, hs - 0.15, 0.8, 0));
-        f.add(sphere(0.16, M.ventLamp, 0, 1.75, 0)); g.add(f);
+        f.add(box(TS, 0.4, 0.3, M.steel, 0, 1.85, 0), box(0.3, 2.05, 0.3, M.steel, -hs + 0.15, 1.02, 0), box(0.3, 2.05, 0.3, M.steel, hs - 0.15, 1.02, 0));
+        f.add(sphere(0.16, M.ventLamp, 0, 2.2, 0)); g.add(f);
       }
     }
   }
-  const mats = { top: M.top, floor: M.floor, sewage: M.sewage, vent: M.vent, wall: M.wall };
+  const mats = { top: M.top, floor: M.floor, sewage: M.sewage, vent: M.vent, wall: M.wall, curb: M.curb };
   for (const k in bufs) { const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(bufs[k].p, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(bufs[k].uv, 2));
     geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, mats[k])); }
@@ -338,7 +339,7 @@ function loadShift(n) {
       hitBy: 0, timer: (i % 5) * 0.3, goal: null, from: null, stuck: 0, mesh: m });
   }
   spawnOrder(); spawnOrder();
-  camReady = false;
+  camReady = false; camYaw = Math.PI;
 }
 function spawnOrder() {
   const free = G.points.map((p, n) => n).filter(n => !G.points[n].order && n !== G.lastPoint);
@@ -528,14 +529,18 @@ function updatePlayer(dt) {
   if (p.knock > 0) p.knock -= dt;
   else {
     const k = Math.min(1, dt * 12);
-    p.vx += (ax * RUN - p.vx) * k; p.vz += (-ay * RUN - p.vz) * k;
-    if (mag > 0.2) { let d = Math.atan2(ax, -ay) - p.ang; d = Math.atan2(Math.sin(d), Math.cos(d)); p.ang += d * Math.min(1, dt * 16); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
+    // the stick is relative to the camera: up is away from it
+    const wx = Math.sin(camYaw) * ay - Math.cos(camYaw) * ax, wz = Math.cos(camYaw) * ay + Math.sin(camYaw) * ax;
+    p.vx += (wx * RUN - p.vx) * k; p.vz += (wz * RUN - p.vz) * k;
+    if (mag > 0.2) { let d = Math.atan2(wx, wz) - p.ang; d = Math.atan2(Math.sin(d), Math.cos(d)); p.ang += d * Math.min(1, dt * 16); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
   }
   p.coyote = p.onGround ? 0.1 : p.coyote - dt;
   p.jbuf = pressed.jump ? 0.12 : p.jbuf - dt;
   if (p.jbuf > 0 && p.coyote > 0) { p.vh = JUMP; p.jbuf = 0; p.coyote = 0; p.onGround = false; blip(330, 0.12, 'square', 220, 0.03); }
   if (!held.jump && p.vh > 0) p.vh -= GRAV * dt * 1.2; // release early for a short hop
   step(p, dt);
+  // the camera swings in behind the gnome; running straight at it leaves it alone, so there is no spinning
+  camYaw += 2.0 * Math.sin(p.ang - camYaw) * Math.min(1, Math.hypot(p.vx, p.vz) / RUN) * dt;
   if (p.bump === 'v' && !(G.banner && G.banner.vent)) G.banner = { text: `Roll too big for the vent: ${VENT_MAX} sheets or fewer`, t: 1.6, vent: true };
   p.walk = p.onGround && Math.hypot(p.vx, p.vz) > 0.8 ? p.walk + dt * 13 : 0;
   const ti = Math.round(p.x / TS), tj = Math.round(p.z / TS), here = tileAt(p.x, p.z);
@@ -682,7 +687,7 @@ function update(dt) {
 
 /* ---------- presenting the 3D scene ---------- */
 const now = () => performance.now() / 1000;
-let camReady = false; const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
+let camReady = false, camYaw = Math.PI, camDist = 4.6; const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
 function present(dt) {
   const p = G.player, t = now(), ud = p.mesh.userData;
   p.mesh.position.set(p.x, p.h, p.z); p.mesh.rotation.y = p.ang;
@@ -708,15 +713,22 @@ function present(dt) {
     if (d.blob) { const q = e.onGround ? 1 + Math.sin(t * 5 + e.x) * 0.07 : 1.2; d.blob.scale.set(1 / q, q, 1 / q); }
   }
   for (const k of G.pickups) { k.mesh.position.set(k.x, 0.75 + Math.sin(t * 3 + k.x) * 0.12, k.z); k.mesh.rotation.y = t * 2; }
-  for (const pt of G.points) { const on = !!pt.order; pt.beam.visible = pt.ring.visible = on; pt.tag.material.opacity = on ? 1 : 0.25; pt.tag.position.y = 3.4 + (on ? Math.sin(t * 3) * 0.15 : 0); }
+  for (const pt of G.points) { const on = !!pt.order; pt.beam.visible = pt.ring.visible = on; pt.tag.visible = on; pt.tag.position.y = 3.4 + (on ? Math.sin(t * 3) * 0.15 : 0); }
   M.glow.opacity = 0.22 + 0.08 * Math.sin(t * 4);
   M.ventLamp.color.setHex(p.sheets <= VENT_MAX ? 0x58e070 : 0xff4030);
   M.sewage.map.offset.y = -t * 0.25;
   lantern.position.set(p.x, 2.4, p.z);
-  // raised camera: looks down into the cut-away pipes, never turns
-  if (G.state === 'title') { tmpA.set(p.x + 2.4, 2.1, p.z + 4.6); tmpB.set(p.x, 0.95, p.z); p.ang = 0.5; }
-  else { tmpA.set(p.x, 12.5 * camFar, p.z + 7.5 * camFar); tmpB.set(p.x, 0.5, p.z - 0.8); }
-  const k = camReady ? Math.min(1, dt * 7) : 1; camReady = true;
+  // chase camera: low behind the gnome, pulled in when a wall is at their back
+  if (G.state === 'title') { tmpA.set(p.x + 1.6, 1.8, p.z + 3.0); tmpB.set(p.x, 0.95, p.z); p.ang = 0.5; }
+  else {
+    // it may back into the rock (walls are see-through from behind) but never out the far side into another pipe
+    const fx = Math.sin(camYaw), fz = Math.cos(camYaw); let room = 4.6, inRock = false;
+    for (let d = 0.4; d < 4.6; d += 0.2) { const rock = tileAt(p.x - fx * d, p.z - fz * d) === '#';
+      if (inRock && !rock) { room = d - 0.4; break; } inRock = inRock || rock; }
+    camDist = room < camDist ? room : camDist + (room - camDist) * Math.min(1, dt * 5);
+    tmpA.set(p.x - fx * camDist, 2.45 + Math.max(0, p.h) * 0.3, p.z - fz * camDist); tmpB.set(p.x + fx * 2.4, 1.0, p.z + fz * 2.4);
+  }
+  const k = camReady ? Math.min(1, dt * 14) : 1; camReady = true;
   camPos.lerp(tmpA, k); camLook.lerp(tmpB, k);
   camera.position.copy(camPos);
   if (G.shake > 0) { camera.position.x += (Math.random() - 0.5) * G.shake; camera.position.y += (Math.random() - 0.5) * G.shake; }

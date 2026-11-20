@@ -32,6 +32,8 @@ Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the 
   - Cigar: a thick cloud. Creatures inside choke, and cannot see you while you stand in it.
   - Joint: a haze that leaves nearby creatures too mellow to chase or bite for a while.
 - Hit with an empty roll and you are dragged back to the depot and lose 5 tips.
+- The camera rides low behind the gnome and swings round to follow. Movement is relative to it: up is away from the camera.
+  Lettered markers for open orders show through the walls as a rough bearing.
 - The map shows only what you have explored, plus where the open orders are.
 - A shift is 8 orders. Each shift is a new maze.
 
