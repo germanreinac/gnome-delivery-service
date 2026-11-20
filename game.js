@@ -5,6 +5,7 @@
      - each order takes some sheets off it
      - bites and dunks tear sheets off it
      - a paper wrap costs one sheet
+   The pipe is the second tool: a puff makes a gnome-shaped smoke decoy that runs off and lures creatures.
      - vents only fit a roll of VENT_MAX sheets or fewer */
 (() => {
 'use strict';
@@ -91,6 +92,7 @@ const M = {
   glow: new THREE.MeshBasicMaterial({ color: 0xfff0b0, transparent: true, opacity: 0.22, depthWrite: false, ...DS2 }),
   ring: new THREE.MeshBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.55, depthWrite: false, ...DS2 }),
   ventLamp: new THREE.MeshBasicMaterial({ color: 0xff4030 }), coin: new THREE.MeshBasicMaterial({ color: 0xffd24a }),
+  smoke: new THREE.MeshLambertMaterial({ color: 0xd9dedc, transparent: true, opacity: 0.6, depthWrite: false }),
   splash: new THREE.MeshBasicMaterial({ color: 0xa9c46a }), poof: new THREE.MeshBasicMaterial({ color: 0xb9b3a2 }), star: new THREE.MeshBasicMaterial({ color: 0xffe27a }),
 };
 const mesh = (geo, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); return m; };
@@ -101,7 +103,7 @@ const box = (w, h, d, m, x, y, z) => mesh(new THREE.BoxGeometry(w, h, d), m, x, 
 const G = {
   state: 'title', shift: 1, tips: 0, t: 0, clock: 0, TS,
   grid: null, seen: null, depot: null, points: [], group: null,
-  player: null, enemies: [], pickups: [], shots: [], particles: [],
+  player: null, decoy: null, enemies: [], pickups: [], shots: [], particles: [],
   delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, shake: 0, banner: null,
 };
 window.__gds = G;
@@ -242,6 +244,8 @@ function buildGnome() {
   roll.add(tail);
   for (const x of [-0.18, 0.18]) torso.add(box(0.05, 0.05, 0.5, M.rope, x, 0.66, -0.25));
   torso.add(roll);
+  torso.add(mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 6), M.boot, 0.1, 0.78, 0.34).rotateX(Math.PI / 2 - 0.3)); // the pipe
+  torso.add(mesh(new THREE.CylinderGeometry(0.06, 0.045, 0.1, 8), M.boot, 0.1, 0.78, 0.46));
   const arm = new THREE.Group(); arm.position.set(0.36, 0.58, 0.05); // plunger arm, pivoting at the shoulder
   arm.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 8), M.wood, 0, 0.4, 0));
   arm.add(mesh(new THREE.ConeGeometry(0.17, 0.22, 14), M.rubber, 0, 0.88, 0).rotateX(Math.PI));
@@ -249,6 +253,13 @@ function buildGnome() {
   torso.add(arm);
   g.add(bootL, bootR, torso);
   g.userData = { bootL, bootR, torso, roll, tail, arm };
+  return g;
+}
+function buildDecoy() { // a gnome made of pipe smoke
+  const g = new THREE.Group(), puff = (r, x, y, z) => g.add(sphere(r, M.smoke, x, y, z));
+  puff(0.36, 0, 0.36, 0); puff(0.3, 0, 0.82, 0); puff(0.2, 0, 0.6, 0.2); puff(0.34, 0, 0.6, -0.5);
+  g.add(mesh(new THREE.ConeGeometry(0.33, 0.85, 12), M.smoke, 0, 1.4, 0));
+  puff(0.16, -0.16, 0.1, 0.05); puff(0.16, 0.16, 0.1, 0.05);
   return g;
 }
 function buildEnemy(kind) {
@@ -300,11 +311,11 @@ function loadShift(n) {
   for (const s of G.shots) scene.remove(s.mesh);
   const world = generate(40 + n);
   Object.assign(G, { shift: n, grid: world.grid, depot: world.depot, points: world.points, enemies: [], pickups: [], shots: [], particles: [],
-    seen: world.grid.map(r => r.map(() => false)), delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, banner: null, shake: 0, clock: 0, tips: 0 });
+    seen: world.grid.map(r => r.map(() => false)), decoy: null, delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, banner: null, shake: 0, clock: 0, tips: 0 });
   G.group = buildWorld(); scene.add(G.group);
   const pm = buildGnome(); G.group.add(pm);
   G.player = { isPlayer: true, x: G.depot.x, z: G.depot.z + 1.2, h: 0, vx: 0, vz: 0, vh: 0, ang: 0, fx: 0, fz: 1, onGround: true, sheets: MAX_SHEETS,
-    invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, swing: 0, coyote: 0, jbuf: 0, walk: 0, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
+    invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, smokeCd: 0, swing: 0, coyote: 0, jbuf: 0, walk: 0, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
   for (const [kind, i, j] of world.things) {
     const x = i * TS, z = j * TS;
     if (kind === 'P' || kind === '$') { const m = buildPickup(kind); G.group.add(m); G.pickups.push({ kind, x, z, mesh: m }); continue; }
@@ -327,7 +338,7 @@ function spawnOrder() {
 /* ---------- input ---------- */
 const held = {}, pressed = {}, stickAxis = { x: 0, y: 0 };
 const KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
-  Space: 'jump', KeyX: 'attack', KeyJ: 'attack', KeyC: 'wrap', KeyK: 'wrap', Enter: 'confirm' };
+  Space: 'jump', KeyX: 'attack', KeyJ: 'attack', KeyC: 'wrap', KeyK: 'wrap', KeyV: 'smoke', KeyL: 'smoke', Enter: 'confirm' };
 function press(k) { if (!held[k]) pressed[k] = true; held[k] = true; audioInit(); }
 function release(k) { held[k] = false; }
 addEventListener('keydown', e => { const k = KEYMAP[e.code]; if (k) { press(k); e.preventDefault(); } });
@@ -405,7 +416,7 @@ function burst(type, x, h, z, n, speed = 4) {
 }
 function updateParticles(dt) {
   for (const q of G.particles) {
-    q.life -= dt; q.vy -= (q.type === 'sheet' ? 6 : 16) * dt;
+    q.life -= dt; q.vy -= (q.type === 'sheet' ? 6 : q.type === 'smoke' ? -2 : 16) * dt;
     q.mesh.position.x += q.vx * dt; q.mesh.position.y += q.vy * dt; q.mesh.position.z += q.vz * dt;
     if (q.type === 'sheet') { q.mesh.rotation.x += dt * 7; q.mesh.rotation.z += dt * 5; q.vx *= 0.97; q.vz *= 0.97; }
     if (q.life <= 0) scene.remove(q.mesh);
@@ -413,6 +424,34 @@ function updateParticles(dt) {
   G.particles = G.particles.filter(q => q.life > 0);
 }
 const say = (text, t = 1.8) => { G.banner = { text, t }; };
+
+/* Smoke decoy: runs off down the corridors the way the gnome was facing. Creatures that see it chase it instead. */
+function spawnDecoy() {
+  const p = G.player; popDecoy();
+  const m = buildDecoy(); G.group.add(m);
+  G.decoy = { x: p.x, z: p.z, h: 0, vx: 0, vz: 0, vh: 0, fx: p.fx, fz: p.fz, onGround: true, stun: 0, life: 5.5, goal: null, from: null, puff: 0, mesh: m };
+  burst('smoke', p.x + p.fx * 0.4, 1, p.z + p.fz * 0.4, 8, 1.5); blip(240, 0.35, 'sine', 160, 0.05);
+}
+function popDecoy() {
+  const d = G.decoy; if (!d) return;
+  burst('smoke', d.x, 0.8, d.z, 16, 2.5); G.group.remove(d.mesh); G.decoy = null;
+}
+function updateDecoy(dt) {
+  const d = G.decoy; if (!d) return;
+  const ti = Math.round(d.x / TS), tj = Math.round(d.z / TS);
+  if (!d.goal || Math.hypot(d.goal[0] * TS - d.x, d.goal[1] * TS - d.z) < 0.3) {
+    let opts = DIRS.map(([a, b]) => [ti + a, tj + b]).filter(([a, b]) => G.grid[b] && G.grid[b][a] === '.');
+    const fresh = opts.filter(([a, b]) => !d.from || a !== d.from[0] || b !== d.from[1]); if (fresh.length) opts = fresh;
+    const score = ([a, b]) => (a - ti) * d.fx + (b - tj) * d.fz + Math.random() * 0.3; // keep heading the same way where it can
+    d.from = [ti, tj]; d.goal = opts.sort((a, b) => score(b) - score(a))[0] || [ti, tj];
+  }
+  const gx = d.goal[0] * TS - d.x, gz = d.goal[1] * TS - d.z, gd = Math.hypot(gx, gz) || 1;
+  d.vx = gx / gd * 7.5; d.vz = gz / gd * 7.5; if (gd > 0.3) { d.fx = gx / gd; d.fz = gz / gd; }
+  step(d, dt);
+  if ((d.puff -= dt) <= 0) { d.puff = 0.09; burst('smoke', d.x, 0.5, d.z, 1, 0.8); }
+  d.mesh.position.set(d.x, Math.abs(Math.sin(now() * 14)) * 0.12, d.z); d.mesh.rotation.y = Math.atan2(d.fx, d.fz);
+  if ((d.life -= dt) <= 0) popDecoy();
+}
 
 function loseSheets(n) {
   const p = G.player;
@@ -461,6 +500,8 @@ function updatePlayer(dt) {
       blip(700, 0.12, 'triangle', -400, 0.04);
     }
   }
+  p.smokeCd -= dt;
+  if (pressed.smoke) { if (p.smokeCd > 0) say(`Pipe needs ${Math.ceil(p.smokeCd)} s to relight`, 1); else { p.smokeCd = 8; spawnDecoy(); } }
   if (p.h < -0.7) {
     burst('splash', p.x, -0.3, p.z, 14, 5); blip(140, 0.3, 'sine', -80, 0.08);
     Object.assign(p, { x: p.safe.x, z: p.safe.z, h: 0, vx: 0, vz: 0, vh: 0, knock: 0 });
@@ -511,13 +552,17 @@ function updateEnemies(dt) {
     }
     if (e.stun > 0) e.stun -= dt;
     else {
-      const sees = d < 10 && sight(e.x, e.z, p.x, p.z);
+      let tx = dx, tz = dz, td = d, lured = false; // chase the smoke gnome if it is in view, else the real one
+      const dc = G.decoy;
+      if (dc) { const ex = dc.x - e.x, ez = dc.z - e.z, ed = Math.hypot(ex, ez) || 0.001; if (ed < 13 && sight(e.x, e.z, dc.x, dc.z)) { tx = ex; tz = ez; td = ed; lured = true; } }
+      if (lured && td < 0.9) { popDecoy(); e.stun = 1.8; e.vx = e.vz = 0; blip(150, 0.2, 'sine', -60, 0.05); } // caught a lungful
+      const sees = lured || (d < 10 && sight(e.x, e.z, p.x, p.z));
       if (e.kind === 'B') { // clogling: sits, then hops at the gnome
-        if (e.onGround) { e.vx = e.vz = 0; if (e.timer > 1.4 && sees) { e.timer = 0; e.vx = dx / d * 4.4; e.vz = dz / d * 4.4; e.vh = 8.5; e.fx = dx / d; e.fz = dz / d; } }
+        if (e.onGround) { e.vx = e.vz = 0; if (e.timer > 1.4 && sees) { e.timer = 0; e.vx = tx / td * 4.4; e.vz = tz / td * 4.4; e.vh = 8.5; e.fx = tx / td; e.fz = tz / td; } }
       } else {
         let wx = 0, wz = 0;
         const speed = e.kind === 'R' ? [1.5, 3.5] : [3.2, 5.2];
-        if (sees) { wx = dx / d * speed[1]; wz = dz / d * speed[1]; if (e.kind === 'C') { wx += Math.sin(e.timer * 9) * 2 * dz / d; wz -= Math.sin(e.timer * 9) * 2 * dx / d; } e.goal = null; }
+        if (sees) { wx = tx / td * speed[1]; wz = tz / td * speed[1]; if (e.kind === 'C') { wx += Math.sin(e.timer * 9) * 2 * tz / td; wz -= Math.sin(e.timer * 9) * 2 * tx / td; } e.goal = null; }
         else { // wander tile to tile
           const ti = Math.round(e.x / TS), tj = Math.round(e.z / TS);
           if (!e.goal || Math.hypot(e.goal[0] * TS - e.x, e.goal[1] * TS - e.z) < 0.25 || (e.stuck += dt) > 3) {
@@ -567,7 +612,7 @@ function update(dt) {
     const active = G.points.filter(p => p.order).length;
     if (active < MAX_ACTIVE && G.orderTimer > 22) spawnOrder();
     updatePlayer(dt);
-    if (G.state === 'play') updateEnemies(dt);
+    if (G.state === 'play') { updateDecoy(dt); updateEnemies(dt); }
     if (G.banner && (G.banner.t -= dt) <= 0) G.banner = null;
     G.shake = Math.max(0, G.shake - dt);
   } else if (G.state === 'end') {
@@ -654,7 +699,8 @@ function drawHUD() {
   for (let i = 0; i < MAX_SHEETS; i++) { ctx.fillStyle = i < p.sheets ? '#f7f4ea' : 'rgba(247,244,234,0.15)'; ctx.fillRect(48 + i * 15, 18, 12, 18); }
   const fits = p.sheets <= VENT_MAX, vx = 48 + VENT_MAX * 15 - 1.5;
   ctx.fillStyle = fits ? '#58e070' : '#ff6a55'; ctx.fillRect(vx - 1, 14, 2, 26);
-  ctx.textAlign = 'left'; text(fits ? 'Fits through vents' : `Too big for vents (max ${VENT_MAX})`, 48, 49, `800 11px ${BODY}`, fits ? '#58e070' : '#ff8a78');
+  ctx.textAlign = 'left'; text(fits ? 'Fits vents' : `Too big for vents`, 48, 49, `800 11px ${BODY}`, fits ? '#58e070' : '#ff8a78');
+  ctx.textAlign = 'right'; text(p.smokeCd > 0 ? `Pipe ${Math.ceil(p.smokeCd)} s` : 'Pipe ready', 226, 49, `800 11px ${BODY}`, p.smokeCd > 0 ? '#8fa9a2' : '#f3efe2');
   // orders
   const orders = G.points.filter(q => q.order), ow = 222;
   panel(12, 64, ow, 26 + orders.length * 22 + (orders.length ? 0 : 20));
@@ -700,7 +746,7 @@ function overlay() {
     text('Emergency toilet paper, straight up the pipe.', LW / 2, 160 * big + 8, `800 ${Math.max(13, 17 * big)}px ${BODY}`, '#c9d8d3');
     if (Math.floor(now() * 2) % 2) { panel(LW / 2 - 190, LH - 76, 380, 40); text('Press Enter or tap to start your shift', LW / 2, LH - 55, `20px ${DISPLAY}`, '#f3efe2'); }
   } else if (G.state === 'play') drawHUD();
-  else if (G.state === 'brief') ticket(322, (cx, y, w) => {
+  else if (G.state === 'brief') ticket(362, (cx, y, w) => {
     const body = `600 ${w < 440 ? 12 : 14}px ${BODY}`, lines = [
       ['No clock. Take orders in any order, find your own way.', '#10201f'],
       ['Quicker deliveries tip a little better, that is all.', '#5b6f6a'],
@@ -710,6 +756,8 @@ function overlay() {
       ['Paper wrap: throw a sheet to cocoon a creature,', '#10201f'],
       ['then whack the cocoon to bowl it into the others.', '#5b6f6a'],
       [`Vents are shortcuts, but only fit ${VENT_MAX} sheets or fewer.`, '#10201f'],
+      ['Pipe: puff a smoke gnome that runs off ahead of you.', '#10201f'],
+      ['Creatures chase it instead, and choke when they catch it.', '#5b6f6a'],
       ['Reload at the depot whenever you like.', '#5b6f6a']];
     text(`SHIFT ${G.shift} · ${TOTAL_ORDERS} ORDERS`, cx, y + 32, `800 13px ${BODY}`, '#d8432f');
     text('The Undercity', cx, y + 64, `34px ${DISPLAY}`, '#10201f');
