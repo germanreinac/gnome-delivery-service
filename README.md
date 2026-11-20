@@ -14,7 +14,8 @@ Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the 
 | Jump | Space | Jump |
 | Plunger whack | X or J | Whack |
 | Paper wrap | C or K | Wrap |
-| Smoke decoy | V or L | Smoke |
+| Use smoke | V or L | Smoke |
+| Swap smoke | Q, E or 1 to 4 | Tap the smoke's name |
 | Continue | Enter | Tap the screen |
 
 ## The loop
@@ -25,8 +26,11 @@ Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the 
   a paper wrap costs 1. Reload at the depot any time.
 - Vents are shortcuts through the rock, but only a roll of 6 sheets or fewer fits. Creatures cannot follow you in.
 - Paper wrap cocoons a creature for a few seconds. Whack the cocoon to bowl it into the others.
-- The pipe is the second tool: a puff makes a gnome-shaped smoke decoy that runs off the way you are facing.
-  Creatures that see it chase it instead of you, and are stunned when they catch it. It takes 8 seconds to relight.
+- Smokes are the second tool. Swap with Q, 1 to 4, or by tapping the smoke's name; each has its own relight time.
+  - Cigarette: a gnome-shaped smoke decoy runs off the way you face. Creatures chase it and are stunned when they catch it.
+  - Pipe: a smoke ring rolls forward and shoves creatures back, into sewage if it is there.
+  - Cigar: a thick cloud. Creatures inside choke, and cannot see you while you stand in it.
+  - Joint: a haze that leaves nearby creatures too mellow to chase or bite for a while.
 - Hit with an empty roll and you are dragged back to the depot and lose 5 tips.
 - The map shows only what you have explored, plus where the open orders are.
 - A shift is 8 orders. Each shift is a new maze.

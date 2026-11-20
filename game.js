@@ -5,7 +5,9 @@
      - each order takes some sheets off it
      - bites and dunks tear sheets off it
      - a paper wrap costs one sheet
-   The pipe is the second tool: a puff makes a gnome-shaped smoke decoy that runs off and lures creatures.
+   Smokes are the second tool, swapped on the fly, each with its own cooldown:
+     cigarette = a gnome-shaped smoke decoy that runs off, pipe = a smoke ring that shoves creatures back,
+     cigar = a thick cloud that hides you, joint = a haze that leaves creatures too mellow to bite.
      - vents only fit a roll of VENT_MAX sheets or fewer */
 (() => {
 'use strict';
@@ -16,6 +18,12 @@ const GRAV = 22, RUN = 6.5, JUMP = 8, RADIUS = 0.42;
 const MAX_SHEETS = 12, VENT_MAX = 6, TOTAL_ORDERS = 8, MAX_ACTIVE = 3;
 const DISPLAY = '"Lilita One", "Arial Rounded MT Bold", sans-serif';
 const BODY = 'Nunito, system-ui, sans-serif';
+const SMOKES = [
+  { id: 'cig', name: 'Cigarette', cd: 8, hint: 'runaway decoy' },
+  { id: 'pipe', name: 'Pipe', cd: 5, hint: 'push ring' },
+  { id: 'cigar', name: 'Cigar', cd: 12, hint: 'smokescreen' },
+  { id: 'joint', name: 'Joint', cd: 15, hint: 'mellow haze' },
+];
 const ADDRESSES = ['Apartment 3B', 'Café Bruma', 'Night bus depot', 'Mrs. Okafor, No. 12', 'The gym showers', 'Dentist, 2nd floor'];
 
 /* ---------- three.js setup ---------- */
@@ -103,7 +111,7 @@ const box = (w, h, d, m, x, y, z) => mesh(new THREE.BoxGeometry(w, h, d), m, x, 
 const G = {
   state: 'title', shift: 1, tips: 0, t: 0, clock: 0, TS,
   grid: null, seen: null, depot: null, points: [], group: null,
-  player: null, decoy: null, enemies: [], pickups: [], shots: [], particles: [],
+  player: null, decoy: null, rings: [], clouds: [], enemies: [], pickups: [], shots: [], particles: [],
   delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, shake: 0, banner: null,
 };
 window.__gds = G;
@@ -244,15 +252,20 @@ function buildGnome() {
   roll.add(tail);
   for (const x of [-0.18, 0.18]) torso.add(box(0.05, 0.05, 0.5, M.rope, x, 0.66, -0.25));
   torso.add(roll);
-  torso.add(mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 6), M.boot, 0.1, 0.78, 0.34).rotateX(Math.PI / 2 - 0.3)); // the pipe
-  torso.add(mesh(new THREE.CylinderGeometry(0.06, 0.045, 0.1, 8), M.boot, 0.1, 0.78, 0.46));
+  // whatever is being smoked, one model per entry in SMOKES
+  const stick = (r1, r2, len, mat) => { const m = new THREE.Group(); m.position.set(0.09, 0.78, 0.25);
+    m.add(mesh(new THREE.CylinderGeometry(r1, r2, len, 8), mat, 0, 0, len / 2).rotateX(Math.PI / 2), sphere(r1 * 1.05, M.eye, 0, 0, len)); return m; };
+  const pipe = new THREE.Group(); pipe.position.set(0.09, 0.78, 0.25);
+  pipe.add(mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 6), M.boot, 0, 0, 0.1).rotateX(Math.PI / 2 - 0.3), mesh(new THREE.CylinderGeometry(0.06, 0.045, 0.1, 8), M.boot, 0, 0, 0.22));
+  const mouth = [stick(0.02, 0.02, 0.24, M.paper), pipe, stick(0.045, 0.04, 0.3, M.rope), stick(0.035, 0.014, 0.26, M.paper)];
+  torso.add(...mouth);
   const arm = new THREE.Group(); arm.position.set(0.36, 0.58, 0.05); // plunger arm, pivoting at the shoulder
   arm.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 8), M.wood, 0, 0.4, 0));
   arm.add(mesh(new THREE.ConeGeometry(0.17, 0.22, 14), M.rubber, 0, 0.88, 0).rotateX(Math.PI));
   arm.add(sphere(0.08, M.skin, 0, 0.05, 0));
   torso.add(arm);
   g.add(bootL, bootR, torso);
-  g.userData = { bootL, bootR, torso, roll, tail, arm };
+  g.userData = { bootL, bootR, torso, roll, tail, arm, mouth };
   return g;
 }
 function buildDecoy() { // a gnome made of pipe smoke
@@ -309,13 +322,14 @@ function loadShift(n) {
   if (G.group) scene.remove(G.group);
   for (const q of G.particles) scene.remove(q.mesh);
   for (const s of G.shots) scene.remove(s.mesh);
+  for (const s of [...G.rings, ...G.clouds]) scene.remove(s.mesh);
   const world = generate(40 + n);
   Object.assign(G, { shift: n, grid: world.grid, depot: world.depot, points: world.points, enemies: [], pickups: [], shots: [], particles: [],
-    seen: world.grid.map(r => r.map(() => false)), decoy: null, delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, banner: null, shake: 0, clock: 0, tips: 0 });
+    seen: world.grid.map(r => r.map(() => false)), decoy: null, rings: [], clouds: [], delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, banner: null, shake: 0, clock: 0, tips: 0 });
   G.group = buildWorld(); scene.add(G.group);
   const pm = buildGnome(); G.group.add(pm);
   G.player = { isPlayer: true, x: G.depot.x, z: G.depot.z + 1.2, h: 0, vx: 0, vz: 0, vh: 0, ang: 0, fx: 0, fz: 1, onGround: true, sheets: MAX_SHEETS,
-    invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, smokeCd: 0, swing: 0, coyote: 0, jbuf: 0, walk: 0, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
+    invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, smoke: G.player ? G.player.smoke : 0, smokeCd: SMOKES.map(() => 0), swing: 0, coyote: 0, jbuf: 0, walk: 0, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
   for (const [kind, i, j] of world.things) {
     const x = i * TS, z = j * TS;
     if (kind === 'P' || kind === '$') { const m = buildPickup(kind); G.group.add(m); G.pickups.push({ kind, x, z, mesh: m }); continue; }
@@ -338,13 +352,20 @@ function spawnOrder() {
 /* ---------- input ---------- */
 const held = {}, pressed = {}, stickAxis = { x: 0, y: 0 };
 const KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
-  Space: 'jump', KeyX: 'attack', KeyJ: 'attack', KeyC: 'wrap', KeyK: 'wrap', KeyV: 'smoke', KeyL: 'smoke', Enter: 'confirm' };
+  Space: 'jump', KeyX: 'attack', KeyJ: 'attack', KeyC: 'wrap', KeyK: 'wrap', KeyV: 'smoke', KeyL: 'smoke', KeyQ: 'swap', KeyE: 'swap', Enter: 'confirm' };
 function press(k) { if (!held[k]) pressed[k] = true; held[k] = true; audioInit(); }
 function release(k) { held[k] = false; }
-addEventListener('keydown', e => { const k = KEYMAP[e.code]; if (k) { press(k); e.preventDefault(); } });
+addEventListener('keydown', e => { const k = KEYMAP[e.code]; if (k) { press(k); e.preventDefault(); }
+  const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code); if (n >= 0 && G.player) G.player.smoke = n; });
 addEventListener('keyup', e => { const k = KEYMAP[e.code]; if (k) release(k); });
 addEventListener('blur', () => { for (const k in held) held[k] = false; });
-stage.addEventListener('pointerdown', e => { if (e.target.tagName === 'CANVAS') pressed.confirm = true; audioInit(); });
+stage.addEventListener('pointerdown', e => {
+  if (e.target.tagName === 'CANVAS') { // tapping the smoke chip in the HUD swaps smokes
+    const r = stage.getBoundingClientRect(), k = r.width / LW, x = (e.clientX - r.left) / k, y = (e.clientY - r.top) / k;
+    if (G.state === 'play' && x > 12 && x < 234 && y > 60 && y < 98) pressed.swap = true; else pressed.confirm = true;
+  }
+  audioInit();
+});
 for (const b of document.querySelectorAll('[data-key]')) {
   const k = b.dataset.key;
   b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('on'); press(k); if (G.state !== 'play') pressed.confirm = true; });
@@ -453,6 +474,40 @@ function updateDecoy(dt) {
   if ((d.life -= dt) <= 0) popDecoy();
 }
 
+const inCloud = (x, z) => G.clouds.some(c => Math.hypot(c.x - x, c.z - z) < c.r);
+function useSmoke() {
+  const p = G.player, k = SMOKES[p.smoke];
+  if (p.smokeCd[p.smoke] > 0) { say(`${k.name} needs ${Math.ceil(p.smokeCd[p.smoke])} s to relight`, 1); return; }
+  p.smokeCd[p.smoke] = k.cd;
+  if (k.id === 'cig') spawnDecoy();
+  else if (k.id === 'pipe') { // a smoke ring that rolls forward and shoves whatever it meets
+    const m = mesh(new THREE.TorusGeometry(0.8, 0.16, 8, 20), M.smoke); m.rotation.y = p.ang; scene.add(m);
+    G.rings.push({ x: p.x + p.fx * 0.7, z: p.z + p.fz * 0.7, vx: p.fx * 9, vz: p.fz * 9, life: 1.1, mesh: m });
+    blip(300, 0.3, 'sine', -120, 0.05);
+  } else if (k.id === 'cigar') { // a thick cloud: creatures inside choke, and cannot see a gnome standing in it
+    const m = new THREE.Group(); for (let i = 0; i < 11; i++) { const a = i * 2.4, r = i ? 1.2 + (i % 3) * 0.6 : 0; m.add(sphere(1.1 + (i % 4) * 0.2, M.smoke, Math.cos(a) * r, 0.7 + (i % 3) * 0.35, Math.sin(a) * r)); }
+    m.position.set(p.x, 0, p.z); scene.add(m);
+    G.clouds.push({ x: p.x, z: p.z, r: 3.4, life: 6, mesh: m });
+    blip(110, 0.5, 'sine', 60, 0.06);
+  } else { // a haze: creatures that breathe it wander off harmless for a while
+    for (const e of G.enemies) if (Math.hypot(e.x - p.x, e.z - p.z) < 7 && sight(p.x, p.z, e.x, e.z)) { e.mellow = 9; e.goal = null; }
+    burst('smoke', p.x, 0.9, p.z, 28, 5); blip(200, 0.6, 'triangle', 80, 0.04);
+  }
+}
+function updateSmokes(dt) {
+  for (const r of G.rings) {
+    r.life -= dt; r.x += r.vx * dt; r.z += r.vz * dt;
+    const c = tileAt(r.x, r.z); if (c === '#' || c === 'v') r.life = 0;
+    const sc = 0.6 + (1 - Math.max(0, r.life) / 1.1) * 0.9; r.mesh.scale.setScalar(sc); r.mesh.position.set(r.x, 0.8, r.z);
+    for (const e of G.enemies) if (e.ringed !== r && !e.launch && Math.hypot(e.x - r.x, e.z - r.z) < 0.9 + sc * 0.6) {
+      e.ringed = r; e.stun = 1.3; e.vx = r.vx; e.vz = r.vz; e.vh = 5; e.onGround = false; e.h = Math.max(e.h, 0.05); blip(140, 0.1, 'square', -40, 0.05); }
+    if (r.life <= 0) { burst('smoke', r.x, 0.8, r.z, 6, 1.5); scene.remove(r.mesh); }
+  }
+  G.rings = G.rings.filter(r => r.life > 0);
+  for (const c of G.clouds) { c.life -= dt; c.mesh.scale.setScalar(Math.max(0.01, Math.min(1, (6 - c.life) * 4, c.life))); c.mesh.rotation.y += dt * 0.3; if (c.life <= 0) scene.remove(c.mesh); }
+  G.clouds = G.clouds.filter(c => c.life > 0);
+}
+
 function loseSheets(n) {
   const p = G.player;
   G.shake = 0.3;
@@ -500,8 +555,9 @@ function updatePlayer(dt) {
       blip(700, 0.12, 'triangle', -400, 0.04);
     }
   }
-  p.smokeCd -= dt;
-  if (pressed.smoke) { if (p.smokeCd > 0) say(`Pipe needs ${Math.ceil(p.smokeCd)} s to relight`, 1); else { p.smokeCd = 8; spawnDecoy(); } }
+  for (let i = 0; i < SMOKES.length; i++) p.smokeCd[i] -= dt;
+  if (pressed.swap) { p.smoke = (p.smoke + 1) % SMOKES.length; blip(400, 0.05, 'square', 100, 0.03); }
+  if (pressed.smoke) useSmoke();
   if (p.h < -0.7) {
     burst('splash', p.x, -0.3, p.z, 14, 5); blip(140, 0.3, 'sine', -80, 0.08);
     Object.assign(p, { x: p.safe.x, z: p.safe.z, h: 0, vx: 0, vz: 0, vh: 0, knock: 0 });
@@ -550,13 +606,15 @@ function updateEnemies(dt) {
       if (whacked) { e.hitBy = p.swing; e.wrap = 0; e.launch = 0.8; e.vx = p.fx * 15; e.vz = p.fz * 15; e.vh = 3; e.h = 0.2; e.onGround = false; blip(260, 0.15, 'square', 300, 0.06); continue; }
       step(e, dt); continue;
     }
-    if (e.stun > 0) e.stun -= dt;
+    if (e.mellow > 0) e.mellow -= dt;
+    if (inCloud(e.x, e.z)) e.stun = Math.max(e.stun, 0.3);
+    if (e.stun > 0) { e.stun -= dt; if (e.onGround) { e.vx *= 0.85; e.vz *= 0.85; } }
     else {
       let tx = dx, tz = dz, td = d, lured = false; // chase the smoke gnome if it is in view, else the real one
       const dc = G.decoy;
       if (dc) { const ex = dc.x - e.x, ez = dc.z - e.z, ed = Math.hypot(ex, ez) || 0.001; if (ed < 13 && sight(e.x, e.z, dc.x, dc.z)) { tx = ex; tz = ez; td = ed; lured = true; } }
       if (lured && td < 0.9) { popDecoy(); e.stun = 1.8; e.vx = e.vz = 0; blip(150, 0.2, 'sine', -60, 0.05); } // caught a lungful
-      const sees = lured || (d < 10 && sight(e.x, e.z, p.x, p.z));
+      const sees = !(e.mellow > 0) && (lured || (!inCloud(p.x, p.z) && d < 10 && sight(e.x, e.z, p.x, p.z)));
       if (e.kind === 'B') { // clogling: sits, then hops at the gnome
         if (e.onGround) { e.vx = e.vz = 0; if (e.timer > 1.4 && sees) { e.timer = 0; e.vx = tx / td * 4.4; e.vz = tz / td * 4.4; e.vh = 8.5; e.fx = tx / td; e.fz = tz / td; } }
       } else {
@@ -582,7 +640,7 @@ function updateEnemies(dt) {
       e.hitBy = p.swing; e.hp--; e.flash = 0.18; e.stun = 0.4; e.vx = -dx / d * 7 + p.fx * 3; e.vz = -dz / d * 7 + p.fz * 3; e.vh = 5; e.onGround = false;
       blip(120, 0.1, 'square', -40, 0.06);
       if (e.hp <= 0) defeat(e, 1);
-    } else if (p.invuln <= 0 && e.stun <= 0 && d < 0.85 && Math.abs(e.h - p.h) < 1.1) {
+    } else if (p.invuln <= 0 && e.stun <= 0 && !(e.mellow > 0) && d < 0.85 && Math.abs(e.h - p.h) < 1.1) {
       p.invuln = 1.2; p.knock = 0.25; p.vx = dx / d * 7; p.vz = dz / d * 7; p.vh = 5.5;
       blip(200, 0.2, 'sawtooth', -120, 0.06);
       loseSheets(2);
@@ -612,7 +670,7 @@ function update(dt) {
     const active = G.points.filter(p => p.order).length;
     if (active < MAX_ACTIVE && G.orderTimer > 22) spawnOrder();
     updatePlayer(dt);
-    if (G.state === 'play') { updateDecoy(dt); updateEnemies(dt); }
+    if (G.state === 'play') { updateDecoy(dt); updateSmokes(dt); updateEnemies(dt); }
     if (G.banner && (G.banner.t -= dt) <= 0) G.banner = null;
     G.shake = Math.max(0, G.shake - dt);
   } else if (G.state === 'end') {
@@ -635,11 +693,13 @@ function present(dt) {
   const r = 0.3 + 0.7 * p.sheets / MAX_SHEETS; ud.roll.scale.set(1, r, r); ud.roll.visible = p.sheets > 0;
   ud.tail.rotation.x = -0.5 - spd * 0.1 + Math.sin(t * 9) * 0.2;
   ud.arm.rotation.x = p.attack > 0 ? -0.9 + (1 - p.attack / 0.22) * 2.8 : 0.35 + sw * 0.15;
+  ud.mouth.forEach((m, i) => { m.visible = i === p.smoke; });
   p.mesh.visible = !(p.invuln > 0 && G.state === 'play' && Math.floor(t * 14) % 2);
   for (const e of G.enemies) {
     const d = e.mesh.userData;
     e.mesh.position.set(e.x, e.h, e.z); e.mesh.rotation.y = Math.atan2(e.fx, e.fz);
     if (e.launch > 0) e.mesh.rotation.x += dt * 18; else e.mesh.rotation.x = 0;
+    e.mesh.rotation.z = e.mellow > 0 ? Math.sin(t * 3 + e.x) * 0.3 : 0;
     const wrapped = e.wrap > 0 || e.launch > 0;
     d.cocoon.visible = wrapped; d.body.visible = !wrapped || (e.wrap < 1.2 && e.wrap > 0 && Math.floor(t * 10) % 2 === 0);
     e.mesh.scale.setScalar(e.flash > 0 ? 1.3 : 1);
@@ -699,8 +759,14 @@ function drawHUD() {
   for (let i = 0; i < MAX_SHEETS; i++) { ctx.fillStyle = i < p.sheets ? '#f7f4ea' : 'rgba(247,244,234,0.15)'; ctx.fillRect(48 + i * 15, 18, 12, 18); }
   const fits = p.sheets <= VENT_MAX, vx = 48 + VENT_MAX * 15 - 1.5;
   ctx.fillStyle = fits ? '#58e070' : '#ff6a55'; ctx.fillRect(vx - 1, 14, 2, 26);
-  ctx.textAlign = 'left'; text(fits ? 'Fits vents' : `Too big for vents`, 48, 49, `800 11px ${BODY}`, fits ? '#58e070' : '#ff8a78');
-  ctx.textAlign = 'right'; text(p.smokeCd > 0 ? `Pipe ${Math.ceil(p.smokeCd)} s` : 'Pipe ready', 226, 49, `800 11px ${BODY}`, p.smokeCd > 0 ? '#8fa9a2' : '#f3efe2');
+  ctx.textAlign = 'left'; text(fits ? 'Fits through vents' : `Too big for vents (max ${VENT_MAX})`, 48, 49, `800 11px ${BODY}`, fits ? '#58e070' : '#ff8a78');
+  // current smoke: tap it (or Q) to swap
+  const sm = SMOKES[p.smoke], cd = p.smokeCd[p.smoke];
+  panel(12, 64, 222, 30);
+  text(sm.name, 22, 80, `15px ${DISPLAY}`, '#f3efe2'); const nw = ctx.measureText(sm.name).width;
+  text(sm.hint, 30 + nw, 80, `600 11px ${BODY}`, '#8fa9a2');
+  ctx.textAlign = 'right'; text(cd > 0 ? `${Math.ceil(cd)} s` : 'ready', 224, 80, `800 12px ${BODY}`, cd > 0 ? '#e2b23c' : '#58e070');
+  ctx.save(); ctx.translate(0, 36);
   // orders
   const orders = G.points.filter(q => q.order), ow = 222;
   panel(12, 64, ow, 26 + orders.length * 22 + (orders.length ? 0 : 20));
@@ -715,10 +781,11 @@ function drawHUD() {
     ctx.textAlign = 'right'; text(`${pt.order.need} sheets`, 12 + ow - 34, y, `800 12px ${BODY}`, ok ? '#58e070' : '#e2b23c');
     text(`+${4 + pt.order.need + Math.ceil(pt.order.bonus)}`, 12 + ow - 10, y, `800 12px ${BODY}`, '#ffe27a');
   });
+  ctx.restore();
   const c = narrow ? 5 : 7; drawMap(LW - W * c - 18, 18, c);
   if (G.banner) {
     ctx.font = `${narrow ? 15 : 19}px ${DISPLAY}`; ctx.textAlign = 'center';
-    const w = Math.min(LW - 24, ctx.measureText(G.banner.text).width + 32), y = narrow ? 200 : LH - 70;
+    const w = Math.min(LW - 24, ctx.measureText(G.banner.text).width + 32), y = narrow ? 236 : LH - 70;
     ctx.fillStyle = '#f3efe2'; ctx.beginPath(); ctx.roundRect(LW / 2 - w / 2, y, w, 36, 10); ctx.fill();
     ctx.fillStyle = '#10201f'; ctx.fillText(G.banner.text, LW / 2, y + 19, w - 16);
   }
@@ -756,8 +823,8 @@ function overlay() {
       ['Paper wrap: throw a sheet to cocoon a creature,', '#10201f'],
       ['then whack the cocoon to bowl it into the others.', '#5b6f6a'],
       [`Vents are shortcuts, but only fit ${VENT_MAX} sheets or fewer.`, '#10201f'],
-      ['Pipe: puff a smoke gnome that runs off ahead of you.', '#10201f'],
-      ['Creatures chase it instead, and choke when they catch it.', '#5b6f6a'],
+      ['Smokes: cigarette decoy, pipe push ring, cigar', '#10201f'],
+      ['smokescreen, joint haze. Swap with Q or tap its name.', '#5b6f6a'],
       ['Reload at the depot whenever you like.', '#5b6f6a']];
     text(`SHIFT ${G.shift} · ${TOTAL_ORDERS} ORDERS`, cx, y + 32, `800 13px ${BODY}`, '#d8432f');
     text('The Undercity', cx, y + 64, `34px ${DISPLAY}`, '#10201f');
