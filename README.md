@@ -1,24 +1,32 @@
 # Gnome Delivery Service
 
-A 3D sewer-running delivery game. You are a gnome courier with a roll of toilet paper roped to your back.
-Someone upstairs has run out. Get the roll through the pipes to their bathroom before they give up.
+A 3D sewer delivery game. You are a gnome courier with a roll of toilet paper roped to your back,
+running orders through a labyrinth of pipes and vents under the city.
 
 ## Play
 
-Open `index.html` in a browser. No build step; three.js loads from a CDN. The earlier 2D side-scroller is in `2d/`.
+Open `index.html` in a browser. No build step; three.js loads from a CDN.
+Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the single-pipe 3D run in git history.
 
 | Action | Keyboard | Touch |
 | --- | --- | --- |
 | Move | W A S D or arrows | Thumb stick |
 | Jump | Space | Jump |
 | Plunger whack | X or J | Whack |
+| Paper wrap | C or K | Wrap |
 | Continue | Enter | Tap the screen |
 
-## How it works
+## The loop
 
-- The roll is your health: 12 sheets. A bite costs 2, a dunk in the sewage costs 3. Zero sheets, no delivery.
-- Each customer has an urgency timer. Sheets left and time to spare set the star rating and the tip.
-- Rats patrol and charge, cockroaches skitter, cloglings (hair-clog blobs) hop at you.
-- Spare rolls along the way restore 3 sheets.
+- There is no clock. Orders come in from bathrooms around the map; take them in any order and find your own route.
+  Faster deliveries tip slightly better, nothing more.
+- The roll is cargo, health and ammo: 12 sheets. Orders use 3 to 6 sheets, a bite or a dunk in sewage tears off 2,
+  a paper wrap costs 1. Reload at the depot any time.
+- Vents are shortcuts through the rock, but only a roll of 6 sheets or fewer fits. Creatures cannot follow you in.
+- Paper wrap cocoons a creature for a few seconds. Whack the cocoon to bowl it into the others.
+- Hit with an empty roll and you are dragged back to the depot and lose 5 tips.
+- The map shows only what you have explored, plus where the open orders are.
+- A shift is 8 orders. Each shift is a new maze.
 
-Each level is one long bent pipe, described as data at the top of `game.js` (`LEVELS`): the path's bends and slopes, pits, bridges and crates, and a list of things to place. Gameplay runs in pipe coordinates (distance along, sideways, height), which are then wrapped onto the curve.
+The maze is generated from a seed in `generate()` in `game.js`: a depth-first maze with extra loops, three chambers,
+delivery points at far dead ends, vents where the walk around is long, and sewage across straight corridors.
