@@ -1,6 +1,7 @@
 /* Gnome Delivery Service — 3D prototype (three.js r128).
    An open sewer labyrinth, seen from just behind the gnome. The camera swings round to follow where they run.
-   Core loop: stock up at the depot, pick which orders to run, find your own route, come back.
+   Core loop: hang about in the lobby with the other couriers, accept the orders you want when they ping your app,
+   load a roll, head out through one of the lobby's four pipes, find your own route, come back.
    The roll on the gnome's back is cargo, health, ammo and the key to the vents all at once:
      - each order takes some sheets off it
      - bites and dunks tear sheets off it
@@ -88,6 +89,11 @@ const ventTex = canvasTexture(64, (g, n) => {
   g.fillStyle = '#aeb9b8'; g.fillRect(0, 0, n, n);
   g.fillStyle = '#6d7a7a'; for (let i = 0; i < 4; i++) g.fillRect(4, i * 16 + 5, n - 8, 6);
 });
+const lobbyTex = canvasTexture(128, (g, n) => { // warm planks
+  for (let r = 0; r < 4; r++) { g.fillStyle = ['#a9793f', '#9c6d38', '#b28246', '#946634'][r]; g.fillRect(0, r * 32, n, 32); g.fillStyle = '#6e4a22'; g.fillRect(0, r * 32, n, 2); g.fillRect((r * 45) % n, r * 32, 2, 32); }
+});
+const NPC_LINES = ['Waiting on a ping. Always waiting.', '3B again? Somebody check on 3B.', 'Mind the mob den, south-east.', 'Slim roll, quick vents. Trust me.',
+  'A human nearly got me Tuesday.', 'Back room pays. I never said that.', 'Tips are down this week.', 'My roll got soggy. Again.'];
 const lam = (color, extra) => new THREE.MeshLambertMaterial(Object.assign({ color }, extra));
 const DS2 = { side: THREE.DoubleSide };
 const M = {
@@ -102,6 +108,7 @@ const M = {
   roach: lam(0x6b3d1e), roachHi: lam(0xa2673a), clog: lam(0x4d382d), white: lam(0xf3efe2),
   glow: new THREE.MeshBasicMaterial({ color: 0xfff0b0, transparent: true, opacity: 0.22, depthWrite: false, ...DS2 }),
   ring: new THREE.MeshBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.55, depthWrite: false, ...DS2 }),
+  rug: lam(0x8c3b2e), phone: new THREE.MeshBasicMaterial({ color: 0x9fe8ff }), lobby: lam(0xffffff, { map: lobbyTex, ...DS2 }),
   suit: lam(0x2a2a33), fedora: lam(0x141418), blade: lam(0xd0d6da), purple: lam(0x8a4fd0),
   ventLamp: new THREE.MeshBasicMaterial({ color: 0xff4030 }), coin: new THREE.MeshBasicMaterial({ color: 0xffd24a }),
   smoke: new THREE.MeshLambertMaterial({ color: 0xd9dedc, transparent: true, opacity: 0.6, depthWrite: false }),
@@ -115,7 +122,7 @@ const box = (w, h, d, m, x, y, z) => mesh(new THREE.BoxGeometry(w, h, d), m, x, 
 const G = {
   state: 'title', shift: 1, tips: 0, t: 0, clock: 0, TS,
   grid: null, seen: null, depot: null, points: [], group: null,
-  player: null, decoy: null, rings: [], clouds: [], drops: [], fixer: null, hunt: null, huntTimer: 40, enemies: [], pickups: [], shots: [], particles: [],
+  player: null, decoy: null, rings: [], clouds: [], drops: [], fixer: null, offers: [], npcs: [], hunt: null, huntTimer: 40, enemies: [], pickups: [], shots: [], particles: [],
   delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, shake: 0, banner: null,
 };
 window.__gds = G;
@@ -147,7 +154,9 @@ function generate(seed) {
   for (const [x, y] of passages) if (grid[y][x] === '#' && R() < 0.09) grid[y][x] = '.';
   // chambers: the depot in the middle and two side rooms
   const room = grid.map(r => r.map(() => false)), depot = { i: 11, j: 9 };
-  for (const [rx, ry] of [[depot.i, depot.j], [5, 5], [15, 13]]) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { grid[ry + dy][rx + dx] = '.'; room[ry + dy][rx + dx] = true; }
+  // chambers: the lobby in the middle (5 x 5), the fixer's back room and the mob's den
+  for (const [rx, ry, r] of [[depot.i, depot.j, 2], [5, 5, 1], [17, 13, 1]]) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { grid[ry + dy][rx + dx] = '.'; room[ry + dy][rx + dx] = true; }
+  for (const [dx, dy] of DIRS) grid[depot.j + dy * 3][depot.i + dx * 3] = '.'; // one pipe out of the lobby on every side
   const nearRoom = (x, y) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (room[y + dy] && room[y + dy][x + dx]) return true; return false; };
   const dist = bfs(grid, depot.i, depot.j);
   const cells = []; for (let cy = 0; cy < CH; cy++) for (let cx = 0; cx < CW; cx++) { const x = cx * 2 + 1, y = cy * 2 + 1; if (!room[y][x]) cells.push([x, y]); }
@@ -176,12 +185,13 @@ function generate(seed) {
   for (const [x, y] of wet) grid[y][x] = '~';
   // creatures, spare rolls, coins
   const things = [], taken = new Set(used), far = (x, y, n) => things.every(t => Math.abs(t[1] - x) + Math.abs(t[2] - y) >= n);
-  things.push(['M', 16, 12], ['M', 15, 14]); // the mob's den; the other side room is the fixer's back room
+  things.push(['M', 18, 12], ['M', 17, 14]); // the mob's den; the other side room is the fixer's back room
   const kinds = ['R', 'C', 'B', 'R', 'C', 'B', 'R']; // nothing spawns within 9 tiles' walk of the depot
   for (const [x, y] of shuffle(cells.slice())) { if (!kinds.length) break; if (dist[y][x] >= 9 && !taken.has(x + ',' + y) && far(x, y, 4)) { things.push([kinds.pop(), x, y]); taken.add(x + ',' + y); } }
   let spare = 0; for (const [x, y] of shuffle(deadEnds.slice())) if (spare < 4 && !taken.has(x + ',' + y)) { things.push(['P', x, y]); taken.add(x + ',' + y); spare++; }
   let coins = 0; for (const [x, y] of shuffle(cells.slice())) if (coins < 14 && !taken.has(x + ',' + y)) { things.push(['$', x, y]); taken.add(x + ',' + y); coins++; }
-  return { grid, depot: { ...depot, x: depot.i * TS, z: depot.j * TS }, points, drops, fixer: { i: 5, j: 5, x: 5 * TS, z: 5 * TS, cool: 0 }, things };
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) grid[depot.j + dy][depot.i + dx] = 'L'; // lobby floor: creatures will not step on it
+  return { grid, depot: { ...depot, x: depot.i * TS, z: depot.j * TS, px: depot.i * TS - 5.6, pz: depot.j * TS - 5.6 }, points, drops, fixer: { i: 5, j: 5, x: 5 * TS, z: 5 * TS, cool: 0 }, things };
 }
 
 /* ---------- world building ---------- */
@@ -195,7 +205,7 @@ function buildWorld() {
   const hs = TS / 2, U = TS / 4;
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     const c = grid[j][i], x = i * TS, z = j * TS, y = c === '#' ? WALL_H : c === '~' ? -0.4 : 0;
-    quad(c === '#' ? 'top' : c === '~' ? 'sewage' : c === 'v' ? 'vent' : 'floor', [x - hs, y, z + hs], [x + hs, y, z + hs], [x + hs, y, z - hs], [x - hs, y, z - hs], c === 'v' ? 2 : U, c === 'v' ? 2 : U);
+    quad(c === '#' ? 'top' : c === '~' ? 'sewage' : c === 'v' ? 'vent' : c === 'L' ? 'lobby' : 'floor', [x - hs, y, z + hs], [x + hs, y, z + hs], [x + hs, y, z - hs], [x - hs, y, z - hs], c === 'v' ? 2 : U, c === 'v' ? 2 : U);
     if (c === '#' || c === '~') for (const [dx, dz] of DIRS) { // side faces towards anything lower
       const n = grid[j + dz] && grid[j + dz][i + dx]; if (!n || n === '#' || (c === '~' && n === '~')) continue;
       const cx = x + dx * hs, cz = z + dz * hs, ex = dz * hs, ez = -dx * hs, y0 = c === '#' ? (n === '~' ? -0.4 : 0) : -0.4, y1 = c === '#' ? WALL_H : 0;
@@ -213,18 +223,36 @@ function buildWorld() {
       }
     }
   }
-  const mats = { top: M.top, floor: M.floor, sewage: M.sewage, vent: M.vent, wall: M.wall, curb: M.curb };
+  const mats = { top: M.top, lobby: M.lobby, floor: M.floor, sewage: M.sewage, vent: M.vent, wall: M.wall, curb: M.curb };
   for (const k in bufs) { const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(bufs[k].p, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(bufs[k].uv, 2));
     geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, mats[k])); }
   g.add(mesh(new THREE.PlaneGeometry(W * TS, H * TS), M.top, (W - 1) * TS / 2, -0.6, (H - 1) * TS / 2).rotateX(-Math.PI / 2));
-  // depot: pallet of rolls and a warm lamp
-  const d = G.depot, pallet = new THREE.Group(); pallet.position.set(d.x - 2.6, 0, d.z - 2.6);
+  // the lobby: couriers hang about here between orders. Roll pallet in the corner, order board on the wall, a pipe out on each side.
+  const d = G.depot, pallet = new THREE.Group(); pallet.position.set(d.px, 0, d.pz);
   pallet.add(box(2.2, 0.2, 2.2, M.wood, 0, 0.1, 0));
   for (const [px, py, pz] of [[-0.55, 0.5, -0.5], [0.55, 0.5, -0.5], [-0.55, 0.5, 0.5], [0.55, 0.5, 0.5], [0, 1.1, 0]]) {
     pallet.add(mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.6, 18), M.paper, px, py, pz), mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.62, 10), M.card, px, py, pz)); }
-  g.add(pallet, mesh(new THREE.RingGeometry(1.5, 1.8, 32), M.ring, d.x, 0.03, d.z).rotateX(-Math.PI / 2));
-  const dl = new THREE.PointLight(0xfff0b0, 1.2, 16); dl.position.set(d.x, 3, d.z); g.add(dl);
+  g.add(pallet, mesh(new THREE.RingGeometry(2.0, 2.3, 32), M.ring, d.px, 0.03, d.pz).rotateX(-Math.PI / 2));
+  g.add(mesh(new THREE.CircleGeometry(3.4, 32), M.rug, d.x, 0.02, d.z).rotateX(-Math.PI / 2));
+  const dl = new THREE.PointLight(0xffd9a0, 0.9, 24); dl.position.set(d.x, 3, d.z); g.add(dl);
+  for (let k = 0; k < 12; k++) g.add(sphere(0.13, M.lamp, d.x + Math.cos(k * 0.5236) * 6.6, 2.9 + (k % 2) * 0.15, d.z + Math.sin(k * 0.5236) * 6.6));
+  const board = mesh(new THREE.PlaneGeometry(3.6, 2), new THREE.MeshBasicMaterial({ map: canvasTexture(256, (c2, n) => { c2.fillStyle = '#6e4a22'; c2.fillRect(0, 0, n, n);
+    c2.fillStyle = '#f3efe2'; c2.font = `44px ${DISPLAY}`; c2.textAlign = 'center'; c2.fillText('ORDERS', n / 2, 50);
+    for (let k = 0; k < 6; k++) { c2.fillStyle = k % 3 ? '#f3efe2' : '#ffe27a'; c2.fillRect(22 + (k % 3) * 76, 76 + Math.floor(k / 3) * 84, 60, 70); c2.fillStyle = '#d8432f'; c2.fillRect(46 + (k % 3) * 76, 72 + Math.floor(k / 3) * 84, 10, 10); } }) }), d.x + 4.4, 1.7, d.z - 7.93);
+  g.add(board);
+  for (const [dx, dz] of DIRS) { g.add(box(dx ? 0.35 : TS, 0.35, dx ? TS : 0.35, M.copper, d.x + dx * 8, 2.7, d.z + dz * 8), sphere(0.2, M.lamp, d.x + dx * 7.8, 2.4, d.z + dz * 7.8)); }
+  G.npcs = [];
+  const hats = [0x4f9d5b, 0xe2b23c, 0x3f6fb8, 0xe07a2f, 0x2aa198, 0xb84f8a, 0x7a6ad8], tunics = [0x7a5230, 0x3d6b4f, 0x6b6f78, 0x2f6fa8];
+  //            x     z    facing  sits smoke phone
+  const crowd = [[-4.6, -1.6, 0.9, 1, -1, 1], [-3.2, -0.6, -2.2, 0, 0, 0], [5.0, -5.4, -0.6, 0, 1, 0], [5.4, 3.6, -1.9, 1, -1, 1],
+    [3.9, 5.0, -2.6, 0, -1, 1], [-5.2, 4.6, 2.2, 1, 2, 0], [3.6, -6.2, 3.14, 0, -1, 0]];
+  crowd.forEach(([x, z, face, sits, smoke, phone], n) => {
+    const m = buildGnome({ npc: true, smoke, phone, hat: lam(hats[n % hats.length]), tunic: lam(tunics[n % tunics.length]) });
+    m.position.set(d.x + x, sits ? 0.34 : 0, d.z + z); m.rotation.y = face; g.add(m);
+    if (sits) g.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.42, 16), M.paper, d.x + x, 0.21, d.z + z));
+    G.npcs.push({ mesh: m, x: d.x + x, z: d.z + z, y: sits ? 0.34 : 0, smokes: smoke >= 0, n });
+  });
   // delivery points: a porcelain pipe up to someone's bathroom
   for (const p of G.points) {
     const pg = new THREE.Group(); pg.position.set(p.x, 0, p.z);
@@ -291,6 +319,8 @@ function buildGnome(o = {}) { // o.bare: no roll, smoke or plunger; o.knife: bla
   const plunger = [arm.children[0], arm.children[1]];
   const knife = new THREE.Group(); knife.add(box(0.05, 0.14, 0.05, M.boot, 0, 0.16, 0), box(0.02, 0.42, 0.09, M.blade, 0, 0.44, 0)); knife.visible = false; arm.add(knife);
   const pkg = new THREE.Group(); pkg.add(box(0.56, 0.34, 0.44, M.crate, 0, 0, 0), box(0.58, 0.1, 0.46, M.purple, 0, 0, 0)); pkg.position.set(0, 1.28, -0.66); pkg.visible = false; torso.add(pkg);
+  if (o.npc) { plunger.forEach(m => { m.visible = false; }); mouth.forEach((m, i) => { m.visible = i === o.smoke; });
+    if (o.phone) torso.add(box(0.13, 0.22, 0.02, M.phone, -0.22, 0.66, 0.36).rotateX(-0.5)); }
   if (o.bare) { roll.visible = false; mouth.forEach(m => { m.visible = false; }); plunger.forEach(m => { m.visible = false; }); knife.visible = !!o.knife; }
   torso.add(arm);
   g.add(bootL, bootR, torso);
@@ -356,10 +386,10 @@ function loadShift(n) {
   for (const s of [...G.rings, ...G.clouds]) scene.remove(s.mesh);
   const world = generate(40 + n);
   Object.assign(G, { shift: n, grid: world.grid, depot: world.depot, points: world.points, drops: world.drops, fixer: world.fixer, hunt: null, huntTimer: 90, enemies: [], pickups: [], shots: [], particles: [],
-    seen: world.grid.map(r => r.map(() => false)), decoy: null, rings: [], clouds: [], delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, banner: null, shake: 0, clock: 0, tips: 0 });
+    seen: world.grid.map(r => r.map(() => false)), offers: [], decoy: null, rings: [], clouds: [], delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, banner: null, shake: 0, clock: 0, tips: 0 });
   G.group = buildWorld(); scene.add(G.group);
   const pm = buildGnome(); G.group.add(pm);
-  G.player = { isPlayer: true, x: G.depot.x, z: G.depot.z + 1.2, h: 0, vx: 0, vz: 0, vh: 0, ang: 0, fx: 0, fz: 1, onGround: true, sheets: MAX_SHEETS,
+  G.player = { isPlayer: true, x: G.depot.x, z: G.depot.z + 1.2, h: 0, vx: 0, vz: 0, vh: 0, ang: Math.PI, fx: 0, fz: -1, onGround: true, sheets: MAX_SHEETS,
     invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, smoke: G.player ? G.player.smoke : 0, smokeCd: SMOKES.map(() => 0), swing: 0, coyote: 0, jbuf: 0, walk: 0, pkg: null, knife: false, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
   for (const [kind, i, j] of world.things) {
     const x = i * TS, z = j * TS;
@@ -371,19 +401,19 @@ function loadShift(n) {
   spawnOrder(); spawnOrder();
   camReady = false; camYaw = Math.PI;
 }
+/* Orders arrive as offers on the app. Nothing is on the clock until the gnome accepts one. */
 function spawnOrder() {
-  const free = G.points.map((p, n) => n).filter(n => !G.points[n].order && n !== G.lastPoint);
-  if (!free.length || G.spawned >= TOTAL_ORDERS) return;
-  const n = free[Math.floor(Math.random() * free.length)];
-  G.points[n].order = { need: 3 + Math.floor(Math.random() * 4), bonus: 8 };
-  G.spawned++; G.orderTimer = 0;
-  if (G.state === 'play') { G.banner = { text: `New order: ${G.points[n].name}`, t: 2.2 }; blip(520, 0.08, 'triangle', 200); }
+  const free = G.points.map((p, n) => n).filter(n => !G.points[n].order && n !== G.lastPoint && !G.offers.some(o => o.n === n));
+  if (!free.length || G.spawned >= TOTAL_ORDERS || G.offers.length >= 3) return;
+  const n = free[Math.floor(Math.random() * free.length)], need = 3 + Math.floor(Math.random() * 4);
+  G.offers.push({ n, need }); G.spawned++; G.orderTimer = 0;
+  if (G.state === 'play') { G.banner = { text: `App ping: ${G.points[n].name} wants ${need} sheets`, t: 2.4 }; blip(520, 0.08, 'triangle', 200); setTimeout(() => blip(520, 0.08, 'triangle', 200), 140); }
 }
 
 /* ---------- input ---------- */
 const held = {}, pressed = {}, stickAxis = { x: 0, y: 0 };
 const KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
-  Space: 'jump', KeyX: 'attack', KeyJ: 'attack', KeyC: 'wrap', KeyK: 'wrap', KeyV: 'smoke', KeyL: 'smoke', KeyQ: 'swap', KeyE: 'swap', Enter: 'confirm' };
+  Space: 'jump', KeyX: 'attack', KeyJ: 'attack', KeyC: 'wrap', KeyK: 'wrap', KeyV: 'smoke', KeyL: 'smoke', KeyQ: 'swap', KeyF: 'accept', KeyE: 'accept', Enter: 'confirm' };
 function press(k) { if (!held[k]) pressed[k] = true; held[k] = true; audioInit(); }
 function release(k) { held[k] = false; }
 addEventListener('keydown', e => { const k = KEYMAP[e.code]; if (k) { press(k); e.preventDefault(); }
@@ -394,6 +424,7 @@ stage.addEventListener('pointerdown', e => {
   if (e.target.tagName === 'CANVAS') { // tapping the smoke chip in the HUD swaps smokes
     const r = stage.getBoundingClientRect(), k = r.width / LW, x = (e.clientX - r.left) / k, y = (e.clientY - r.top) / k;
     if (G.state === 'play' && x > 12 && x < 234 && y > 60 && y < 98) pressed.swap = true;
+    else if (G.state === 'play' && x > 12 && x < 234 && y >= 98 && y < 100 + (G.panelH || 0)) pressed.accept = true; // tapping the order list accepts the next offer
     else { pressed.confirm = true; if (G.state === 'play') { camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY }; stage.setPointerCapture(e.pointerId); } }
   }
   audioInit();
@@ -443,6 +474,7 @@ function blip(freq, dur, type = 'square', slide = 0, vol = 0.05) {
    creatures on their feet will not walk into sewage, but can be knocked or hop into it. */
 function solid(c, e) {
   if (c === '#') return true;
+  if (c === 'L') return !e.isPlayer; // the lobby is for couriers only
   if (c === 'v') return !e.isPlayer || e.sheets > VENT_MAX;
   if (c === '~') return !e.isPlayer && e.onGround && e.stun <= 0 && !e.launch;
   return false;
@@ -568,12 +600,13 @@ for (const k in HUNT) { HUNT[k].visible = false; scene.add(HUNT[k]); }
 function updateHunt(dt) {
   const p = G.player; let h = G.hunt;
   if (!h) {
+    if (tileAt(p.x, p.z) === 'L') return; // nobody is hunted in the lobby
     G.huntTimer -= dt * (p.pkg ? 2 : 1); // carrying a package draws attention
     if (G.huntTimer > 0) return;
     h = G.hunt = { x: p.x - p.fx * 4, z: p.z - p.fz * 4, phase: 'track', timer: 1.8, shots: 0, lost: 0, flash: 0 };
     say('A human spotted you! Keep moving, or hide in a vent or smoke', 3.5); blip(90, 0.6, 'sawtooth', 40, 0.07);
   }
-  const covered = tileAt(p.x, p.z) === 'v' || inCloud(p.x, p.z);
+  const covered = 'vL'.includes(tileAt(p.x, p.z)) || inCloud(p.x, p.z);
   h.lost = covered ? h.lost + dt : 0; h.flash -= dt;
   const dx = p.x - h.x, dz = p.z - h.z, d = Math.hypot(dx, dz) || 0.001;
   const end = msg => { G.hunt = null; G.huntTimer = 70 + Math.random() * 30; if (msg) say(msg, 2.2); };
@@ -640,6 +673,12 @@ function updatePlayer(dt) {
   for (let i = 0; i < SMOKES.length; i++) p.smokeCd[i] -= dt;
   if (pressed.swap) { p.smoke = (p.smoke + 1) % SMOKES.length; blip(400, 0.05, 'square', 100, 0.03); }
   if (pressed.smoke) useSmoke();
+  if (pressed.accept) {
+    const o = G.offers[0];
+    if (!o) say('No orders on the app right now', 1.4);
+    else if (G.points.filter(q => q.order).length >= MAX_ACTIVE) say('Three orders on the go is the limit', 1.6);
+    else { G.offers.shift(); G.points[o.n].order = { need: o.need, bonus: 8 }; say(`Accepted: ${G.points[o.n].name}, ${o.need} sheets`, 2); blip(660, 0.1, 'triangle', 200); }
+  }
   if (p.h < -0.7) {
     burst('splash', p.x, -0.3, p.z, 14, 5); blip(140, 0.3, 'sine', -80, 0.08);
     Object.assign(p, { x: p.safe.x, z: p.safe.z, h: 0, vx: 0, vz: 0, vh: 0, knock: 0 });
@@ -654,7 +693,7 @@ function updatePlayer(dt) {
     else { G.tips += 2; blip(880, 0.07, 'square', 400, 0.03); }
   }
   // depot restock
-  if (Math.hypot(p.x - G.depot.x, p.z - G.depot.z) < 2.2 && p.sheets < MAX_SHEETS) { p.sheets = MAX_SHEETS; say('Fresh roll loaded'); blip(440, 0.1, 'triangle', 220); }
+  if (Math.hypot(p.x - G.depot.px, p.z - G.depot.pz) < 2.8 && p.sheets < MAX_SHEETS) { p.sheets = MAX_SHEETS; say('Fresh roll loaded'); blip(440, 0.1, 'triangle', 220); }
   // back room: the fixer hands out steroid packages for the gyms. The duct is narrow, so the roll must be slim to post one.
   const fixer = G.fixer; fixer.cool -= dt;
   if (!p.pkg && fixer.cool <= 0 && G.drops.length && Math.hypot(p.x - fixer.x, p.z - fixer.z) < 2) {
@@ -681,7 +720,7 @@ function updatePlayer(dt) {
     say(`Delivered to ${pt.name}  +${tip} tips`, 2.4);
     blip(523, 0.12, 'triangle'); setTimeout(() => blip(659, 0.12, 'triangle'), 110); setTimeout(() => blip(784, 0.25, 'triangle'), 220);
     if (G.delivered >= TOTAL_ORDERS) { G.state = 'end'; G.t = 0; }
-    else if (!G.points.some(q => q.order)) spawnOrder();
+    else if (!G.points.some(q => q.order) && !G.offers.length) spawnOrder();
   }
 }
 
@@ -776,11 +815,10 @@ function update(dt) {
     G.player.walk += dt * 13;
     if (go) { loadShift(1); G.state = 'brief'; G.t = 0; }
   } else if (G.state === 'brief') {
-    if (go && G.t > 0.3) { G.state = 'play'; pressed.jump = false; }
+    if (go && G.t > 0.3) { G.state = 'play'; pressed.jump = false; const p = G.player; p.ang = Math.PI; p.fx = 0; p.fz = -1; }
   } else if (G.state === 'play') {
     G.clock += dt; G.orderTimer += dt;
-    const active = G.points.filter(p => p.order).length;
-    if (active < MAX_ACTIVE && G.orderTimer > 22) spawnOrder();
+    if (G.orderTimer > 14) spawnOrder();
     updatePlayer(dt);
     if (G.state === 'play') { updateDecoy(dt); updateSmokes(dt); updateHunt(dt); if (G.state === 'play') updateEnemies(dt); }
     if (G.banner && (G.banner.t -= dt) <= 0) G.banner = null;
@@ -825,6 +863,8 @@ function present(dt) {
   }
   for (const k of G.pickups) { k.mesh.position.set(k.x, 0.75 + Math.sin(t * 3 + k.x) * 0.12, k.z); k.mesh.rotation.y = t * 2; }
   for (const pt of G.points) { const on = !!pt.order; pt.beam.visible = pt.ring.visible = on; pt.tag.visible = on; pt.tag.position.y = 3.4 + (on ? Math.sin(t * 3) * 0.15 : 0); }
+  for (const c of G.npcs) { c.mesh.position.y = c.y + Math.sin(t * 2 + c.n) * 0.02; c.mesh.userData.torso.rotation.z = Math.sin(t * 0.7 + c.n * 2) * 0.05;
+    if (c.smokes && Math.random() < dt * 0.5) burst('smoke', c.x + Math.sin(c.mesh.rotation.y) * 0.5, c.y + 0.95, c.z + Math.cos(c.mesh.rotation.y) * 0.5, 1, 0.5); }
   G.drops.forEach((dr, n) => { dr.beam.visible = dr.ring.visible = dr.tag.visible = !!p.pkg && p.pkg.drop === n; });
   G.fixer.ring.visible = !p.pkg && G.fixer.cool <= 0;
   const hu = G.state === 'play' ? G.hunt : null;
@@ -874,13 +914,14 @@ function drawMap(x0, y0, c) {
   panel(x0 - 6, y0 - 6, W * c + 12, H * c + 12);
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     const ch = G.grid[j][i]; if (!G.seen[j][i] || ch === '#') continue;
-    ctx.fillStyle = ch === '~' ? '#8aa63c' : ch === 'v' ? '#d5dcdc' : '#4f6d63'; ctx.fillRect(x0 + i * c, y0 + j * c, c, c);
+    ctx.fillStyle = ch === '~' ? '#8aa63c' : ch === 'v' ? '#d5dcdc' : ch === 'L' ? '#a9793f' : '#4f6d63'; ctx.fillRect(x0 + i * c, y0 + j * c, c, c);
   }
-  ctx.fillStyle = '#ffe27a'; ctx.fillRect(x0 + (G.depot.i - 0.5) * c, y0 + (G.depot.j - 0.5) * c, c * 2, c * 2);
+  ctx.fillStyle = '#ffe27a'; ctx.fillRect(x0 + (G.depot.i - 2) * c, y0 + (G.depot.j - 2) * c, c, c); // roll pallet
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (const pt of G.points) {
     const px = x0 + (pt.i + 0.5) * c, py = y0 + (pt.j + 0.5) * c;
     if (pt.order) { ctx.fillStyle = '#d8432f'; ctx.beginPath(); ctx.arc(px, py, c * 0.9 + Math.sin(t * 5) * 1.2, 0, 7); ctx.fill(); text(pt.letter, px, py + 0.5, `${c * 1.3}px ${DISPLAY}`, '#f3efe2'); }
+    else if (G.offers.some(o => G.points[o.n] === pt)) { ctx.strokeStyle = '#d8432f'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(px, py, c * 0.8, 0, 7); ctx.stroke(); text(pt.letter, px, py + 0.5, `${c * 1.2}px ${DISPLAY}`, '#f3efe2'); }
     else if (G.seen[pt.j][pt.i]) { ctx.strokeStyle = '#f3efe2'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(px, py, c * 0.45, 0, 7); ctx.stroke(); }
   }
   const fx = G.fixer; if (G.seen[fx.j][fx.i]) { ctx.fillStyle = '#8a4fd0'; ctx.fillRect(x0 + (fx.i - 0.5) * c, y0 + (fx.j - 0.5) * c, c * 2, c * 2); }
@@ -905,18 +946,27 @@ function drawHUD() {
   ctx.textAlign = 'right'; text(cd > 0 ? `${Math.ceil(cd)} s` : 'ready', 224, 80, `800 12px ${BODY}`, cd > 0 ? '#e2b23c' : '#58e070');
   ctx.save(); ctx.translate(0, 36);
   // orders
-  const orders = G.points.filter(q => q.order), ow = 222, slots = Math.max(1, orders.length);
-  panel(12, 64, ow, 26 + (slots + 1) * 22);
+  const orders = G.points.filter(q => q.order), offers = G.offers, ow = 222, quiet = !orders.length && !offers.length, slots = orders.length + offers.length + (quiet ? 1 : 0);
+  G.panelH = 26 + (slots + 1) * 22; panel(12, 64, ow, G.panelH);
   ctx.textAlign = 'left'; text(`Orders  ${G.delivered}/${TOTAL_ORDERS} done`, 22, 78, `14px ${DISPLAY}`, '#f3efe2');
   ctx.textAlign = 'right'; text(`${G.tips} tips`, 12 + ow - 10, 78, `14px ${DISPLAY}`, '#ffe27a');
-  if (!orders.length) { ctx.textAlign = 'left'; text('Quiet for now. Explore.', 22, 101, `600 12px ${BODY}`, '#8fa9a2'); }
-  orders.forEach((pt, n) => {
+  if (quiet) { ctx.textAlign = 'left'; text('No pings yet. Hang about.', 22, 101, `600 12px ${BODY}`, '#8fa9a2'); }
+  const short = s => s.length > 17 ? s.slice(0, 16) + '…' : s;
+  orders.forEach((pt, n) => { // accepted
     const y = 101 + n * 22, ok = p.sheets >= pt.order.need;
     ctx.fillStyle = '#d8432f'; ctx.beginPath(); ctx.arc(30, y, 8, 0, 7); ctx.fill();
     ctx.textAlign = 'center'; text(pt.letter, 30, y + 0.5, `11px ${DISPLAY}`, '#f3efe2');
-    ctx.textAlign = 'left'; text(pt.name.length > 17 ? pt.name.slice(0, 16) + '…' : pt.name, 44, y, `800 12px ${BODY}`, '#f3efe2');
+    ctx.textAlign = 'left'; text(short(pt.name), 44, y, `800 12px ${BODY}`, '#f3efe2');
     ctx.textAlign = 'right'; text(`${pt.order.need} sheets`, 12 + ow - 34, y, `800 12px ${BODY}`, ok ? '#58e070' : '#e2b23c');
     text(`+${4 + pt.order.need + Math.ceil(pt.order.bonus)}`, 12 + ow - 10, y, `800 12px ${BODY}`, '#ffe27a');
+  });
+  offers.forEach((o, n) => { // on the app, not yet accepted: the first one is taken with F or a tap
+    const pt = G.points[o.n], y = 101 + (orders.length + n) * 22;
+    ctx.strokeStyle = '#d8432f'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(30, y, 7.5, 0, 7); ctx.stroke();
+    ctx.textAlign = 'center'; text(pt.letter, 30, y + 0.5, `11px ${DISPLAY}`, '#f3efe2');
+    ctx.textAlign = 'left'; text(short(pt.name), 44, y, `600 12px ${BODY}`, '#a9bcb6');
+    ctx.textAlign = 'right'; text(`${o.need} sheets`, 12 + ow - 34, y, `600 12px ${BODY}`, '#a9bcb6');
+    if (n === 0) { ctx.fillStyle = '#ffe27a'; ctx.beginPath(); ctx.roundRect(12 + ow - 28, y - 8, 18, 16, 4); ctx.fill(); ctx.textAlign = 'center'; text('F', 12 + ow - 19, y + 0.5, `11px ${DISPLAY}`, '#10201f'); }
   });
   { // the back-room job, always the last row
     const y = 101 + slots * 22;
@@ -930,6 +980,13 @@ function drawHUD() {
   if (G.hunt) { const hw = W * c + 12, hx = LW - W * c - 24, hy = 18 + H * c + 12;
     ctx.fillStyle = Math.floor(now() * 4) % 2 ? '#d8432f' : '#a52f20'; ctx.beginPath(); ctx.roundRect(hx, hy, hw, 26, 8); ctx.fill();
     ctx.textAlign = 'center'; text(G.hunt.phase === 'grab' || G.hunt.phase === 'slam' ? 'HAND COMING DOWN' : 'HUMAN ABOVE', hx + hw / 2, hy + 14, `${narrow ? 11 : 14}px ${DISPLAY}`, '#f3efe2'); }
+  { // a line of chat from the nearest courier in the lobby
+    let best = null, bd = 4.5; for (const c of G.npcs) { const dd = Math.hypot(c.x - p.x, c.z - p.z); if (dd < bd) { bd = dd; best = c; } }
+    if (best) { const v = tmpB.set(best.x, best.y + 2.1, best.z).project(camera);
+      if (v.z < 1 && Math.abs(v.x) < 0.95) { const line = NPC_LINES[(best.n + Math.floor(now() / 6)) % NPC_LINES.length], sx = (v.x * 0.5 + 0.5) * LW, sy = Math.max(30, (-v.y * 0.5 + 0.5) * LH);
+        ctx.font = `800 12px ${BODY}`; const bw = ctx.measureText(line).width + 20; ctx.fillStyle = '#f3efe2'; ctx.beginPath(); ctx.roundRect(sx - bw / 2, sy - 13, bw, 26, 9); ctx.fill();
+        ctx.textAlign = 'center'; text(line, sx, sy + 1, `800 12px ${BODY}`, '#10201f'); } }
+  }
   if (G.banner) {
     ctx.font = `${narrow ? 15 : 19}px ${DISPLAY}`; ctx.textAlign = 'center';
     const w = Math.min(LW - 24, ctx.measureText(G.banner.text).width + 32), y = narrow ? 236 : LH - 70;
@@ -960,10 +1017,11 @@ function overlay() {
     text('Emergency toilet paper, straight up the pipe.', LW / 2, 160 * big + 8, `800 ${Math.max(13, 17 * big)}px ${BODY}`, '#c9d8d3');
     if (Math.floor(now() * 2) % 2) { panel(LW / 2 - 190, LH - 76, 380, 40); text('Press Enter or tap to start your shift', LW / 2, LH - 55, `20px ${DISPLAY}`, '#f3efe2'); }
   } else if (G.state === 'play') drawHUD();
-  else if (G.state === 'brief') ticket(404, (cx, y, w) => {
+  else if (G.state === 'brief') ticket(424, (cx, y, w) => {
     const body = `600 ${w < 440 ? 12 : 14}px ${BODY}`, lines = [
-      ['No clock. Take orders in any order, find your own way.', '#10201f'],
-      ['Your roll is cargo, health and ammo. Reload at the depot.', '#5b6f6a'],
+      ['Orders ping your app. Accept the ones you want with F', '#10201f'],
+      ['or by tapping the list. No clock. Four pipes lead out.', '#5b6f6a'],
+      ['Your roll is cargo, health and ammo. Reload at the pallet.', '#5b6f6a'],
       ['Paper wrap: throw a sheet to cocoon a creature,', '#10201f'],
       ['then whack the cocoon to bowl it into the others.', '#5b6f6a'],
       [`Vents are shortcuts, but only fit ${VENT_MAX} sheets or fewer.`, '#10201f'],
@@ -975,7 +1033,7 @@ function overlay() {
       ['in a vent or smoke until they lose you.', '#5b6f6a'],
       ['Drag the view to look around.', '#10201f']];
     text(`SHIFT ${G.shift} · ${TOTAL_ORDERS} ORDERS`, cx, y + 32, `800 13px ${BODY}`, '#d8432f');
-    text('The Undercity', cx, y + 64, `34px ${DISPLAY}`, '#10201f');
+    text('The Lobby', cx, y + 64, `34px ${DISPLAY}`, '#10201f');
     lines.forEach(([s, col], n) => s && text(s, cx, y + 104 + n * 20, body, col));
   });
   else if (G.state === 'end') ticket(230, (cx, y) => {

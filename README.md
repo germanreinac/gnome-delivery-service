@@ -16,15 +16,18 @@ Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the 
 | Plunger whack | X or J | Whack |
 | Paper wrap | C or K | Wrap |
 | Use smoke | V or L | Smoke |
+| Accept the next order | F or E | Tap the order list |
 | Swap smoke | Q, E or 1 to 4 | Tap the smoke's name |
 | Continue | Enter | Tap the screen |
 
 ## The loop
 
-- There is no clock. Orders come in from bathrooms around the map; take them in any order and find your own route.
-  Faster deliveries tip slightly better, nothing more.
+- You start in the lobby, a safe common room where other courier gnomes hang about waiting for a ping. Creatures cannot
+  enter it and humans do not hunt there. Four pipes lead out, one on each side, into the same connected sewers.
+- Orders arrive as offers on your app. Accept the ones you want (F, or tap the order list), up to three at a time,
+  and run them in any order. There is no clock; a faster delivery tips slightly better once accepted, nothing more.
 - The roll is cargo, health and ammo: 12 sheets. Orders use 3 to 6 sheets, a bite or a dunk in sewage tears off 2,
-  a paper wrap costs 1. Reload at the depot any time.
+  a paper wrap costs 1. Reload at the roll pallet in the lobby any time.
 - Vents are shortcuts through the rock, but only a roll of 6 sheets or fewer fits. Creatures cannot follow you in.
 - Paper wrap cocoons a creature for a few seconds. Whack the cocoon to bowl it into the others.
 - Smokes are the second tool. Swap with Q, 1 to 4, or by tapping the smoke's name; each has its own relight time.
