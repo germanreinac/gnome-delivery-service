@@ -176,9 +176,9 @@ function generate(seed) {
   for (const [x, y] of wet) grid[y][x] = '~';
   // creatures, spare rolls, coins
   const things = [], taken = new Set(used), far = (x, y, n) => things.every(t => Math.abs(t[1] - x) + Math.abs(t[2] - y) >= n);
-  things.push(['M', 14, 12], ['M', 16, 12], ['M', 15, 14]); // the mob's den; the other side room is the fixer's back room
-  const kinds = ['M', 'R', 'C', 'R', 'C', 'B', 'R', 'C', 'B', 'R', 'C', 'B'];
-  for (const [x, y] of shuffle(cells.slice())) { if (!kinds.length) break; if (dist[y][x] >= 5 && !taken.has(x + ',' + y) && far(x, y, 4)) { things.push([kinds.pop(), x, y]); taken.add(x + ',' + y); } }
+  things.push(['M', 16, 12], ['M', 15, 14]); // the mob's den; the other side room is the fixer's back room
+  const kinds = ['R', 'C', 'B', 'R', 'C', 'B', 'R']; // nothing spawns within 9 tiles' walk of the depot
+  for (const [x, y] of shuffle(cells.slice())) { if (!kinds.length) break; if (dist[y][x] >= 9 && !taken.has(x + ',' + y) && far(x, y, 4)) { things.push([kinds.pop(), x, y]); taken.add(x + ',' + y); } }
   let spare = 0; for (const [x, y] of shuffle(deadEnds.slice())) if (spare < 4 && !taken.has(x + ',' + y)) { things.push(['P', x, y]); taken.add(x + ',' + y); spare++; }
   let coins = 0; for (const [x, y] of shuffle(cells.slice())) if (coins < 14 && !taken.has(x + ',' + y)) { things.push(['$', x, y]); taken.add(x + ',' + y); coins++; }
   return { grid, depot: { ...depot, x: depot.i * TS, z: depot.j * TS }, points, drops, fixer: { i: 5, j: 5, x: 5 * TS, z: 5 * TS, cool: 0 }, things };
@@ -355,7 +355,7 @@ function loadShift(n) {
   for (const s of G.shots) scene.remove(s.mesh);
   for (const s of [...G.rings, ...G.clouds]) scene.remove(s.mesh);
   const world = generate(40 + n);
-  Object.assign(G, { shift: n, grid: world.grid, depot: world.depot, points: world.points, drops: world.drops, fixer: world.fixer, hunt: null, huntTimer: 40, enemies: [], pickups: [], shots: [], particles: [],
+  Object.assign(G, { shift: n, grid: world.grid, depot: world.depot, points: world.points, drops: world.drops, fixer: world.fixer, hunt: null, huntTimer: 90, enemies: [], pickups: [], shots: [], particles: [],
     seen: world.grid.map(r => r.map(() => false)), decoy: null, rings: [], clouds: [], delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, banner: null, shake: 0, clock: 0, tips: 0 });
   G.group = buildWorld(); scene.add(G.group);
   const pm = buildGnome(); G.group.add(pm);
@@ -366,7 +366,7 @@ function loadShift(n) {
     if (kind === 'P' || kind === '$') { const m = buildPickup(kind); G.group.add(m); G.pickups.push({ kind, x, z, mesh: m }); continue; }
     const m = buildEnemy(kind); G.group.add(m);
     G.enemies.push({ kind, x, z, h: 0, vx: 0, vz: 0, vh: 0, hp: kind === 'C' ? 1 : kind === 'M' ? 3 : 2, wind: 0, dash: 0, cool: 0, lx: 0, lz: 1, fx: 0, fz: 1, onGround: true, stun: 0, flash: 0, wrap: 0, launch: 0,
-      hitBy: 0, timer: (i % 5) * 0.3, goal: null, from: null, stuck: 0, mesh: m });
+      hitBy: 0, timer: (i % 5) * 0.3, home: [i, j], goal: null, from: null, stuck: 0, mesh: m });
   }
   spawnOrder(); spawnOrder();
   camReady = false; camYaw = Math.PI;
@@ -393,10 +393,19 @@ addEventListener('blur', () => { for (const k in held) held[k] = false; });
 stage.addEventListener('pointerdown', e => {
   if (e.target.tagName === 'CANVAS') { // tapping the smoke chip in the HUD swaps smokes
     const r = stage.getBoundingClientRect(), k = r.width / LW, x = (e.clientX - r.left) / k, y = (e.clientY - r.top) / k;
-    if (G.state === 'play' && x > 12 && x < 234 && y > 60 && y < 98) pressed.swap = true; else pressed.confirm = true;
+    if (G.state === 'play' && x > 12 && x < 234 && y > 60 && y < 98) pressed.swap = true;
+    else { pressed.confirm = true; if (G.state === 'play') { camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY }; stage.setPointerCapture(e.pointerId); } }
   }
   audioInit();
 });
+// drag anywhere on the view (right thumb, or the mouse) to swing and tilt the camera
+let camDrag = null;
+stage.addEventListener('pointermove', e => {
+  if (!camDrag || e.pointerId !== camDrag.id) return;
+  camYaw -= (e.clientX - camDrag.x) * 0.007; camPitch = Math.max(0.14, Math.min(1.1, camPitch + (e.clientY - camDrag.y) * 0.005)); camHold = 2.5;
+  camDrag.x = e.clientX; camDrag.y = e.clientY;
+});
+for (const ev of ['pointerup', 'pointercancel']) stage.addEventListener(ev, e => { if (camDrag && e.pointerId === camDrag.id) camDrag = null; });
 for (const b of document.querySelectorAll('[data-key]')) {
   const k = b.dataset.key;
   b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('on'); press(k); if (G.state !== 'play') pressed.confirm = true; });
@@ -541,7 +550,7 @@ function updateSmokes(dt) {
 
 function knockout(msg) {
   const p = G.player;
-  G.tips = Math.max(0, G.tips - 5); G.hunt = null; G.huntTimer = 40;
+  G.tips = Math.max(0, G.tips - 5); G.hunt = null; G.huntTimer = 70;
   if (p.pkg) { p.pkg = null; msg += ', package lost'; }
   Object.assign(p, { x: G.depot.x, z: G.depot.z + 1.2, h: 0, vx: 0, vz: 0, vh: 0, invuln: 2.5, knock: 0, safe: { x: G.depot.x, z: G.depot.z } });
   say(msg, 3); blip(160, 0.5, 'sawtooth', -100); G.shake = 0.3;
@@ -559,7 +568,7 @@ for (const k in HUNT) { HUNT[k].visible = false; scene.add(HUNT[k]); }
 function updateHunt(dt) {
   const p = G.player; let h = G.hunt;
   if (!h) {
-    G.huntTimer -= dt * (p.pkg ? 3 : 1); // carrying a package draws attention
+    G.huntTimer -= dt * (p.pkg ? 2 : 1); // carrying a package draws attention
     if (G.huntTimer > 0) return;
     h = G.hunt = { x: p.x - p.fx * 4, z: p.z - p.fz * 4, phase: 'track', timer: 1.8, shots: 0, lost: 0, flash: 0 };
     say('A human spotted you! Keep moving, or hide in a vent or smoke', 3.5); blip(90, 0.6, 'sawtooth', 40, 0.07);
@@ -567,11 +576,11 @@ function updateHunt(dt) {
   const covered = tileAt(p.x, p.z) === 'v' || inCloud(p.x, p.z);
   h.lost = covered ? h.lost + dt : 0; h.flash -= dt;
   const dx = p.x - h.x, dz = p.z - h.z, d = Math.hypot(dx, dz) || 0.001;
-  const end = msg => { G.hunt = null; G.huntTimer = 40 + Math.random() * 20; if (msg) say(msg, 2.2); };
+  const end = msg => { G.hunt = null; G.huntTimer = 70 + Math.random() * 30; if (msg) say(msg, 2.2); };
   if (h.phase !== 'slam' && h.lost > 1.5) return end('The human lost you');
-  if ((h.phase === 'track' || h.phase === 'grab') && !covered) { const sp = Math.min(d, (h.phase === 'grab' ? 4.4 : 5.4) * dt); h.x += dx / d * sp; h.z += dz / d * sp; }
+  if ((h.phase === 'track' || h.phase === 'grab') && !covered) { const sp = Math.min(d, (h.phase === 'grab' ? 4.0 : 4.6) * dt); h.x += dx / d * sp; h.z += dz / d * sp; }
   if ((h.timer -= dt) > 0) return;
-  if (h.phase === 'track') { if (h.shots < 4) { h.phase = 'lock'; h.timer = 0.55; } else { h.phase = 'grab'; h.timer = 1.1; say('It is reaching in!', 1.5); } }
+  if (h.phase === 'track') { if (h.shots < 4) { h.phase = 'lock'; h.timer = 0.8; } else { h.phase = 'grab'; h.timer = 1.1; say('It is reaching in!', 1.5); } }
   else if (h.phase === 'lock') { // the reticle froze half a second ago; now the shot lands there
     h.shots++; h.phase = 'track'; h.timer = 1.4; h.flash = 0.12; G.shake = 0.3; burst('star', h.x, 0.3, h.z, 10, 4); blip(80, 0.25, 'square', -40, 0.09);
     for (const e of G.enemies) if (!e.dead && Math.hypot(e.x - h.x, e.z - h.z) < 1.3) defeat(e, 1); // creatures can be lured under it
@@ -608,7 +617,7 @@ function updatePlayer(dt) {
   if (!held.jump && p.vh > 0) p.vh -= GRAV * dt * 1.2; // release early for a short hop
   step(p, dt);
   // the camera swings in behind the gnome; running straight at it leaves it alone, so there is no spinning
-  camYaw += 2.0 * Math.sin(p.ang - camYaw) * Math.min(1, Math.hypot(p.vx, p.vz) / RUN) * dt;
+  if ((camHold -= dt) <= 0) camYaw += 2.0 * Math.sin(p.ang - camYaw) * Math.min(1, Math.hypot(p.vx, p.vz) / RUN) * dt;
   if (p.bump === 'v' && !(G.banner && G.banner.vent)) G.banner = { text: `Roll too big for the vent: ${VENT_MAX} sheets or fewer`, t: 1.6, vent: true };
   p.walk = p.onGround && Math.hypot(p.vx, p.vz) > 0.8 ? p.walk + dt * 13 : 0;
   const ti = Math.round(p.x / TS), tj = Math.round(p.z / TS), here = tileAt(p.x, p.z);
@@ -651,7 +660,7 @@ function updatePlayer(dt) {
   if (!p.pkg && fixer.cool <= 0 && G.drops.length && Math.hypot(p.x - fixer.x, p.z - fixer.z) < 2) {
     const n = Math.floor(Math.random() * G.drops.length); p.pkg = { drop: n };
     say(`Steroids for ${G.drops[n].name}. Post them down the gym duct.`, 3.5); blip(300, 0.15, 'triangle', -100);
-    G.huntTimer = Math.min(G.huntTimer, 14);
+    G.huntTimer = Math.min(G.huntTimer, 30);
   }
   if (p.pkg) {
     const dr = G.drops[p.pkg.drop];
@@ -706,17 +715,21 @@ function updateEnemies(dt) {
       const dc = G.decoy;
       if (dc) { const ex = dc.x - e.x, ez = dc.z - e.z, ed = Math.hypot(ex, ez) || 0.001; if (ed < 13 && sight(e.x, e.z, dc.x, dc.z)) { tx = ex; tz = ez; td = ed; lured = true; } }
       if (lured && td < 0.9) { popDecoy(); e.stun = 1.8; e.vx = e.vz = 0; blip(150, 0.2, 'sine', -60, 0.05); } // caught a lungful
-      const sees = !(e.mellow > 0) && (lured || (!inCloud(p.x, p.z) && d < 10 && sight(e.x, e.z, p.x, p.z)));
+      // creatures need the gnome in view for a moment before they react, and give up once it is out of sight
+      const spotted = !(e.mellow > 0) && (lured || (!inCloud(p.x, p.z) && d < 7.5 && sight(e.x, e.z, p.x, p.z)));
+      e.alert = spotted ? Math.min(1.6, (e.alert || 0) + dt) : Math.max(0, (e.alert || 0) - dt * 0.6);
+      const sees = spotted && (lured || e.alert > 0.9);
       if (e.kind === 'B') { // clogling: sits, then hops at the gnome
-        if (e.onGround) { e.vx = e.vz = 0; if (e.timer > 1.4 && sees) { e.timer = 0; e.vx = tx / td * 4.4; e.vz = tz / td * 4.4; e.vh = 8.5; e.fx = tx / td; e.fz = tz / td; } }
+        if (e.onGround) { e.vx = e.vz = 0; if (e.timer > 2.2 && sees) { e.timer = 0; e.vx = tx / td * 3.4; e.vz = tz / td * 3.4; e.vh = 8.5; e.fx = tx / td; e.fz = tz / td; } }
       } else {
         let wx = 0, wz = 0;
-        const speed = e.kind === 'R' ? [1.5, 3.5] : e.kind === 'M' ? [1.8, 4.3] : [3.2, 5.2];
+        const speed = e.kind === 'R' ? [1.3, 2.6] : e.kind === 'M' ? [1.5, 3.0] : [2.4, 3.6];
         if (sees) { wx = tx / td * speed[1]; wz = tz / td * speed[1]; if (e.kind === 'C') { wx += Math.sin(e.timer * 9) * 2 * tz / td; wz -= Math.sin(e.timer * 9) * 2 * tx / td; } e.goal = null; }
         else { // wander tile to tile
           const ti = Math.round(e.x / TS), tj = Math.round(e.z / TS);
           if (!e.goal || Math.hypot(e.goal[0] * TS - e.x, e.goal[1] * TS - e.z) < 0.25 || (e.stuck += dt) > 3) {
             let opts = DIRS.map(([a, b]) => [ti + a, tj + b]).filter(([a, b]) => G.grid[b] && G.grid[b][a] === '.');
+            if (e.kind === 'M') { const near = opts.filter(([a, b]) => Math.abs(a - e.home[0]) + Math.abs(b - e.home[1]) <= 2); if (near.length) opts = near; } // the mob stays by its den
             const fresh = opts.filter(([a, b]) => !e.from || a !== e.from[0] || b !== e.from[1]); if (fresh.length) opts = fresh;
             e.from = [ti, tj]; e.goal = opts.length ? opts[Math.floor(Math.random() * opts.length)] : [ti, tj]; e.stuck = 0;
           }
@@ -725,9 +738,9 @@ function updateEnemies(dt) {
         e.vx = wx; e.vz = wz;
         if (e.kind === 'M') { // knife lunge: stop, wind up, dash. The wind-up is the moment to sidestep or whack.
           e.cool -= dt;
-          if (e.dash > 0) { e.dash -= dt; e.vx = e.lx * 12; e.vz = e.lz * 12; wx = e.lx; wz = e.lz; }
+          if (e.dash > 0) { e.dash -= dt; e.vx = e.lx * 10; e.vz = e.lz * 10; wx = e.lx; wz = e.lz; }
           else if (e.wind > 0) { e.vx = e.vz = 0; wx = e.lx; wz = e.lz; if ((e.wind -= dt) <= 0) { e.dash = 0.22; blip(520, 0.08, 'sawtooth', 300, 0.04); } }
-          else if (sees && td < 2.6 && e.cool <= 0) { e.wind = 0.4; e.cool = 1.9; e.lx = tx / td; e.lz = tz / td; e.vx = e.vz = 0; }
+          else if (sees && td < 2.6 && e.cool <= 0) { e.wind = 0.65; e.cool = 2.8; e.lx = tx / td; e.lz = tz / td; e.vx = e.vz = 0; }
         }
         if (Math.hypot(wx, wz) > 0.3) { e.fx = wx / Math.hypot(wx, wz); e.fz = wz / Math.hypot(wx, wz); }
       }
@@ -781,7 +794,8 @@ function update(dt) {
 
 /* ---------- presenting the 3D scene ---------- */
 const now = () => performance.now() / 1000;
-let camReady = false, camYaw = Math.PI, camDist = 4.6; const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
+let camReady = false, camYaw = Math.PI, camDist = 4.6, camPitch = 27 * Math.PI / 180, camHold = 0; // camHold: seconds the auto-follow waits after a manual look
+ const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
 function present(dt) {
   const p = G.player, t = now(), ud = p.mesh.userData;
   p.mesh.position.set(p.x, p.h, p.z); p.mesh.rotation.y = p.ang;
@@ -827,12 +841,15 @@ function present(dt) {
   // chase camera: low behind the gnome, pulled in when a wall is at their back
   if (G.state === 'title') { tmpA.set(p.x + 1.6, 1.8, p.z + 3.0); tmpB.set(p.x, 0.95, p.z); p.ang = 0.5; }
   else {
-    // it may back into the rock (walls are see-through from behind) but never out the far side into another pipe
-    const fx = Math.sin(camYaw), fz = Math.cos(camYaw); let room = 4.6, inRock = false;
-    for (let d = 0.4; d < 4.6; d += 0.2) { const rock = tileAt(p.x - fx * d, p.z - fz * d) === '#';
-      if (inRock && !rock) { room = d - 0.4; break; } inRock = inRock || rock; }
+    // The camera orbits the gnome at camPitch. Below the wall tops it may back into the rock (walls are see-through
+    // from behind) but never out the far side into another pipe; above them it pulls in when a wall would block the view.
+    const fx = Math.sin(camYaw), fz = Math.cos(camYaw), D = 4.6 * Math.cos(camPitch), hc = 1.0 + 4.6 * Math.sin(camPitch), through = hc < WALL_H - 0.05;
+    let room = D, inRock = false;
+    for (let d = 0.4; d < D; d += 0.2) { const rock = tileAt(p.x - fx * d, p.z - fz * d) === '#';
+      if (through) { if (inRock && !rock) { room = d - 0.4; break; } inRock = inRock || rock; }
+      else if (rock && (hc < WALL_H + 0.3 || 1.2 + (hc - 1.2) * d / D < WALL_H + 0.15)) { room = Math.max(0.6, d - 0.35); break; } }
     camDist = room < camDist ? room : camDist + (room - camDist) * Math.min(1, dt * 5);
-    tmpA.set(p.x - fx * camDist, 2.45 + Math.max(0, p.h) * 0.3, p.z - fz * camDist); tmpB.set(p.x + fx * 2.4, 1.0, p.z + fz * 2.4);
+    tmpA.set(p.x - fx * camDist, hc, p.z - fz * camDist); tmpB.set(p.x + fx * 2.0, 1.0, p.z + fz * 2.0);
   }
   const k = camReady ? Math.min(1, dt * 14) : 1; camReady = true;
   camPos.lerp(tmpA, k); camLook.lerp(tmpB, k);
@@ -943,7 +960,7 @@ function overlay() {
     text('Emergency toilet paper, straight up the pipe.', LW / 2, 160 * big + 8, `800 ${Math.max(13, 17 * big)}px ${BODY}`, '#c9d8d3');
     if (Math.floor(now() * 2) % 2) { panel(LW / 2 - 190, LH - 76, 380, 40); text('Press Enter or tap to start your shift', LW / 2, LH - 55, `20px ${DISPLAY}`, '#f3efe2'); }
   } else if (G.state === 'play') drawHUD();
-  else if (G.state === 'brief') ticket(384, (cx, y, w) => {
+  else if (G.state === 'brief') ticket(404, (cx, y, w) => {
     const body = `600 ${w < 440 ? 12 : 14}px ${BODY}`, lines = [
       ['No clock. Take orders in any order, find your own way.', '#10201f'],
       ['Your roll is cargo, health and ammo. Reload at the depot.', '#5b6f6a'],
@@ -955,7 +972,8 @@ function overlay() {
       ['Back room: run steroids to a gym duct for big tips.', '#10201f'],
       ['Mob gnomes lunge with knives and take the package.', '#5b6f6a'],
       ['Humans above shoot, then grab. Keep moving, or hide', '#10201f'],
-      ['in a vent or smoke until they lose you.', '#5b6f6a']];
+      ['in a vent or smoke until they lose you.', '#5b6f6a'],
+      ['Drag the view to look around.', '#10201f']];
     text(`SHIFT ${G.shift} · ${TOTAL_ORDERS} ORDERS`, cx, y + 32, `800 13px ${BODY}`, '#d8432f');
     text('The Undercity', cx, y + 64, `34px ${DISPLAY}`, '#10201f');
     lines.forEach(([s, col], n) => s && text(s, cx, y + 104 + n * 20, body, col));

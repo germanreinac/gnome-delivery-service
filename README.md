@@ -11,6 +11,7 @@ Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the 
 | Action | Keyboard | Touch |
 | --- | --- | --- |
 | Move | W A S D or arrows | Thumb stick |
+| Look around | Drag with the mouse | Drag on the view with your right thumb |
 | Jump | Space | Jump |
 | Plunger whack | X or J | Whack |
 | Paper wrap | C or K | Wrap |
