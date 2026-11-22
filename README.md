@@ -22,31 +22,44 @@ Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the 
 
 ## The loop
 
-- You start in the lobby, a safe common room where other courier gnomes hang about waiting for a ping. Creatures cannot
-  enter it and humans do not hunt there. Four pipes lead out, one on each side, into the same connected sewers.
-- Orders arrive as offers on your app. Accept the ones you want (F, or tap the order list), up to three at a time,
-  and run them in any order. There is no clock; a faster delivery tips slightly better once accepted, nothing more.
-- The roll is cargo, health and ammo: 12 sheets. Orders use 3 to 6 sheets, a bite or a dunk in sewage tears off 2,
-  a paper wrap costs 1. Reload at the roll pallet in the lobby any time.
-- Vents are shortcuts through the rock, but only a roll of 6 sheets or fewer fits. Creatures cannot follow you in.
-- Paper wrap cocoons a creature for a few seconds. Whack the cocoon to bowl it into the others.
-- Smokes are the second tool. Swap with Q, 1 to 4, or by tapping the smoke's name; each has its own relight time.
-  - Cigarette: a gnome-shaped smoke decoy runs off the way you face. Creatures chase it and are stunned when they catch it.
-  - Pipe: a smoke ring rolls forward and shoves creatures back, into sewage if it is there.
-  - Cigar: a thick cloud. Creatures inside choke, and cannot see you while you stand in it.
-  - Joint: a haze that leaves nearby creatures too mellow to chase or bite for a while.
-- The back room (purple on the map) hands out steroid packages for one of two gym ducts: 25 tips, and it does not count
-  towards the shift. The duct is narrow, so the roll must be 6 sheets or fewer to post it. Carrying one draws humans faster.
-- Mob gnomes in black hats hold a den and patrol. They stop, wind up and lunge with a knife: 3 sheets, and they take the
-  package. Beat one and it drops its knife, which swings faster and hits twice as hard as the plunger.
-- Humans above hunt you now and then: a reticle follows you, freezes, and a shot lands there (3 sheets), four times,
-  then a hand comes down to grab you. Keep moving, or stand in a vent or cigar smoke until they lose you.
-  Shots also kill any creature standing under them.
-- Hit with an empty roll and you are dragged back to the depot and lose 5 tips.
-- The camera rides low behind the gnome and swings round to follow. Movement is relative to it: up is away from the camera.
-  Lettered markers for open orders show through the walls as a rough bearing.
-- The map shows only what you have explored, plus where the open orders are.
-- A shift is 8 orders. Each shift is a new maze.
+Push your luck: go out, earn, and decide after every drop whether to risk one more or walk home and bank it.
 
-The maze is generated from a seed in `generate()` in `game.js`: a depth-first maze with extra loops, three chambers,
-delivery points at far dead ends, vents where the walk around is long, and sewage across straight corridors.
+1. **Lobby.** A safe common room where other couriers hang about. Orders ping your app; accept the ones you want
+   (F, or tap the list), up to three. Reload at the roll pallet. Spend at the stores in the corner.
+2. **The run.** Head out through one of the lobby's four pipes. Tips go in your **pocket**, not the bank.
+   Every delivery adds **heat**: creatures notice you sooner and chase harder, and past the mark on the heat bar
+   humans start hunting. There is no clock.
+3. **Cash out.** Walk back into the lobby and the pocket is banked, heat clears, and the sewers repopulate.
+   Get knocked out or grabbed first and the pocket is gone. The bank is always safe.
+4. **Spend.** The stores sell the pipe, cigar and joint, a bigger roll (16, then 20 sheets), the knife, and a map
+   of each district you have opened.
+5. **Go further.** Each delivery banked is a point of reputation (two for a back-room package).
+   Reputation opens the gated pipes.
+
+| District | Opens at | Main threat | Tips |
+| --- | --- | --- | --- |
+| Rat Runs (north) | start | rats; the back room is here | x1 |
+| Mob Turf (east) | reputation 3 | mob gnomes with knives, and their den | x1.3 |
+| The Flood (south) | reputation 7 | sewage everywhere, cloglings | x1.6 |
+| High Street (west) | reputation 12 | heat climbs fast, so humans come quickly | x2 |
+
+Districts only join through the lobby, apart from vents, which cut between them for a roll of 6 sheets or fewer.
+Progress (bank, reputation, purchases) is kept in the browser's local storage where that is available.
+
+## Tools and threats
+
+- The roll is cargo, health and ammo: orders use 3 to 6 sheets, a bite or a dunk in sewage tears off 2,
+  a paper wrap costs 1. Vents only fit a roll of 6 sheets or fewer; creatures cannot follow you in.
+- Paper wrap cocoons a creature for a few seconds. Whack the cocoon to bowl it into the others.
+- Smokes (V to use, Q or 1 to 4 to swap, each with its own relight time): cigarette makes a gnome-shaped smoke decoy
+  that runs off; pipe blows a ring that shoves creatures back; cigar lays a cloud that hides you; joint leaves
+  creatures too mellow to bite. You start with the cigarette.
+- The back room hands out steroid packages for a gym duct in any open district. The duct is narrow, so the roll must
+  be 6 sheets or fewer to post it. Big pay, a lot of heat.
+- Mob gnomes stop, wind up and lunge with a knife: 3 sheets, and they take the package. Beat one and it drops its knife.
+- Humans track you with a reticle, shoot four times (3 sheets each), then a hand comes down to grab you.
+  Keep moving, or stand in a vent or cigar smoke until they lose you. Shots also kill creatures under them.
+- The camera rides behind the gnome; drag on the view to swing and tilt it. Movement is relative to the camera.
+
+The map is generated from a seed in `generate()` in `game.js`: one depth-first maze per district, each starting behind its
+lobby pipe and never crossing into another, then loops, chambers, delivery points, gym ducts, vents and sewage.

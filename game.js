@@ -1,7 +1,9 @@
 /* Gnome Delivery Service — 3D prototype (three.js r128).
    An open sewer labyrinth, seen from just behind the gnome. The camera swings round to follow where they run.
-   Core loop: hang about in the lobby with the other couriers, accept the orders you want when they ping your app,
-   load a roll, head out through one of the lobby's four pipes, find your own route, come back.
+   Core loop (push your luck): accept orders in the lobby, head out through one of its four pipes, deliver.
+   Tips go in your pocket and only count once you walk back into the lobby; a knockout loses the pocket.
+   Every drop raises heat (sharper creatures, more humans), which clears when you come home.
+   Banked tips buy gear at the lobby stores; reputation opens the other pipes, each to a district with its own threat.
    The roll on the gnome's back is cargo, health, ammo and the key to the vents all at once:
      - each order takes some sheets off it
      - bites and dunks tear sheets off it
@@ -18,7 +20,8 @@
 const TS = 3.2, WALL_H = 3.2;            // tile size, wall height
 const CW = 10, CH = 8, W = CW * 2 + 1, H = CH * 2 + 1; // maze cells and tile grid
 const GRAV = 22, RUN = 6.5, JUMP = 8, RADIUS = 0.42;
-const MAX_SHEETS = 12, VENT_MAX = 6, TOTAL_ORDERS = 8, MAX_ACTIVE = 3;
+let MAX_SHEETS = 12; // grows with the bigger-roll upgrade
+const VENT_MAX = 6, MAX_ACTIVE = 3;
 const DISPLAY = '"Lilita One", "Arial Rounded MT Bold", sans-serif';
 const BODY = 'Nunito, system-ui, sans-serif';
 const SMOKES = [
@@ -27,7 +30,20 @@ const SMOKES = [
   { id: 'cigar', name: 'Cigar', cd: 12, hint: 'smokescreen' },
   { id: 'joint', name: 'Joint', cd: 15, hint: 'mellow haze' },
 ];
-const ADDRESSES = ['Apartment 3B', 'Café Bruma', 'Night bus depot', 'Mrs. Okafor, No. 12', 'The gym showers', 'Dentist, 2nd floor'];
+const ADDRESSES = ['Apartment 3B', 'Café Bruma', 'Night bus depot', 'Luigi’s back office', 'Mrs. Okafor, No. 12', 'The gym showers', 'Dentist, 2nd floor', 'High Street bank'];
+/* Four districts, one behind each lobby pipe. Reputation opens them in turn; tips and gym pay scale with the danger. */
+const DISTRICTS = [
+  { name: 'Rat Runs', dir: [0, -1], rep: 0, mult: 1, pay: 15, tint: '#4f6d63', gym: 'Iron Temple Gym', mobs: ['R', 'R', 'C', 'R'], wet: 2 },
+  { name: 'Mob Turf', dir: [1, 0], rep: 3, mult: 1.3, pay: 25, tint: '#6b5868', gym: 'Pump House Gym', mobs: ['M', 'M', 'R'], wet: 2 },
+  { name: 'The Flood', dir: [0, 1], rep: 7, mult: 1.6, pay: 30, tint: '#47795c', gym: 'Deep End Gym', mobs: ['B', 'B', 'C', 'B', 'C'], wet: 9 },
+  { name: 'High Street', dir: [-1, 0], rep: 12, mult: 2, pay: 40, tint: '#566785', gym: 'High Street Fitness', mobs: ['C', 'C', 'R'], wet: 1 },
+];
+const districtOf = (cx, cy) => { const dx = cx - 5, dy = cy - 4; if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) return -1; return Math.abs(dx) * 0.8 >= Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy < 0 ? 0 : 2); };
+/* What carries over between runs (and between visits, where the browser allows it). */
+const SAVE = { bank: 0, rep: 0, smokes: [true, false, false, false], roll: 0, knife: false, maps: [false, false, false, false] };
+try { Object.assign(SAVE, JSON.parse(localStorage.getItem('gds-save-1') || '{}')); } catch (e) { /* storage unavailable: play without it */ }
+const save = () => { try { localStorage.setItem('gds-save-1', JSON.stringify(SAVE)); } catch (e) { /* ignore */ } };
+MAX_SHEETS = [12, 16, 20][SAVE.roll] || 12;
 
 /* ---------- three.js setup ---------- */
 const stage = document.getElementById('stage');
@@ -122,7 +138,7 @@ const box = (w, h, d, m, x, y, z) => mesh(new THREE.BoxGeometry(w, h, d), m, x, 
 const G = {
   state: 'title', shift: 1, tips: 0, t: 0, clock: 0, TS,
   grid: null, seen: null, depot: null, points: [], group: null,
-  player: null, decoy: null, rings: [], clouds: [], drops: [], fixer: null, offers: [], npcs: [], hunt: null, huntTimer: 40, enemies: [], pickups: [], shots: [], particles: [],
+  player: null, decoy: null, rings: [], clouds: [], drops: [], fixer: null, offers: [], npcs: [], gates: [], spawns: [], pocket: 0, heat: 0, runRep: 0, out: false, shopOpen: false, hunt: null, huntTimer: 60, enemies: [], pickups: [], shots: [], particles: [],
   delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, shake: 0, banner: null,
 };
 window.__gds = G;
@@ -139,59 +155,66 @@ function bfs(grid, sx, sy, pass = c => c === '.') {
 }
 function generate(seed) {
   const R = rng(seed), grid = []; for (let y = 0; y < H; y++) grid.push(new Array(W).fill('#'));
-  const pick = a => a[Math.floor(R() * a.length)], shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-  // depth-first maze over the cells, then knock out a few extra walls so there are loops
-  const seenCell = new Set(['0,0']), stack = [[0, 0]]; grid[1][1] = '.';
-  while (stack.length) {
-    const [cx, cy] = stack[stack.length - 1];
-    const next = shuffle(DIRS.map(([dx, dy]) => [cx + dx, cy + dy]).filter(([x, y]) => x >= 0 && y >= 0 && x < CW && y < CH && !seenCell.has(x + ',' + y)));
-    if (!next.length) { stack.pop(); continue; }
-    const [nx, ny] = next[0]; seenCell.add(nx + ',' + ny);
-    grid[cy + ny + 1][cx + nx + 1] = '.'; grid[ny * 2 + 1][nx * 2 + 1] = '.'; stack.push([nx, ny]);
+  const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const cellD = (cx, cy) => cx < 0 || cy < 0 || cx >= CW || cy >= CH ? -2 : districtOf(cx, cy), tileD = (x, y) => cellD((x - 1) / 2, (y - 1) / 2);
+  // one depth-first maze per district, each starting at the cell behind its lobby pipe, never crossing into another
+  const seenCell = new Set(), key = (x, y) => x + ',' + y;
+  const carve = (cx, cy, nx, ny) => { grid[cy + ny + 1][cx + nx + 1] = '.'; grid[ny * 2 + 1][nx * 2 + 1] = '.'; seenCell.add(key(nx, ny)); };
+  DISTRICTS.forEach((D, d) => {
+    const sx = 5 + D.dir[0] * 2, sy = 4 + D.dir[1] * 2, stack = [[sx, sy]]; grid[sy * 2 + 1][sx * 2 + 1] = '.'; seenCell.add(key(sx, sy));
+    while (stack.length) {
+      const [cx, cy] = stack[stack.length - 1];
+      const next = shuffle(DIRS.map(([dx, dy]) => [cx + dx, cy + dy]).filter(([x, y]) => cellD(x, y) === d && !seenCell.has(key(x, y))));
+      if (!next.length) { stack.pop(); continue; }
+      carve(cx, cy, next[0][0], next[0][1]); stack.push(next[0]);
+    }
+  });
+  for (let pass = 0; pass < 4; pass++) for (let cy = 0; cy < CH; cy++) for (let cx = 0; cx < CW; cx++) { // join any cell the walk could not reach
+    const d = cellD(cx, cy); if (d < 0 || seenCell.has(key(cx, cy))) continue;
+    const nb = shuffle(DIRS.map(([dx, dy]) => [cx + dx, cy + dy])).filter(([x, y]) => seenCell.has(key(x, y)) && cellD(x, y) >= 0), same = nb.filter(([x, y]) => cellD(x, y) === d);
+    const to = same[0] || (pass === 3 ? nb[0] : null); if (to) carve(to[0], to[1], cx, cy);
   }
   const passages = []; // wall slots between two cells
   for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) if ((x + y) % 2 === 1) passages.push([x, y, x % 2 === 0 ? 1 : 0, x % 2 === 0 ? 0 : 1]);
-  for (const [x, y] of passages) if (grid[y][x] === '#' && R() < 0.09) grid[y][x] = '.';
-  // chambers: the depot in the middle and two side rooms
-  const room = grid.map(r => r.map(() => false)), depot = { i: 11, j: 9 };
-  // chambers: the lobby in the middle (5 x 5), the fixer's back room and the mob's den
-  for (const [rx, ry, r] of [[depot.i, depot.j, 2], [5, 5, 1], [17, 13, 1]]) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { grid[ry + dy][rx + dx] = '.'; room[ry + dy][rx + dx] = true; }
+  for (const [x, y, dx, dy] of passages) if (grid[y][x] === '#' && tileD(x - dx, y - dy) >= 0 && tileD(x - dx, y - dy) === tileD(x + dx, y + dy) && R() < 0.1) grid[y][x] = '.'; // loops, inside a district only
+  // chambers: the lobby in the middle (5 x 5), the fixer's back room up the north pipe, the mob's den out east
+  const room = grid.map(r => r.map(() => false)), depot = { i: 11, j: 9 }, back = [11, 3], den = [17, 11];
+  for (const [rx, ry, r] of [[depot.i, depot.j, 2], [...back, 1], [...den, 1]]) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { grid[ry + dy][rx + dx] = '.'; room[ry + dy][rx + dx] = true; }
   for (const [dx, dy] of DIRS) grid[depot.j + dy * 3][depot.i + dx * 3] = '.'; // one pipe out of the lobby on every side
   const nearRoom = (x, y) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (room[y + dy] && room[y + dy][x + dx]) return true; return false; };
   const dist = bfs(grid, depot.i, depot.j);
-  const cells = []; for (let cy = 0; cy < CH; cy++) for (let cx = 0; cx < CW; cx++) { const x = cx * 2 + 1, y = cy * 2 + 1; if (!room[y][x]) cells.push([x, y]); }
+  const cells = []; for (let cy = 0; cy < CH; cy++) for (let cx = 0; cx < CW; cx++) { const x = cx * 2 + 1, y = cy * 2 + 1; if (!room[y][x] && cellD(cx, cy) >= 0) cells.push([x, y, cellD(cx, cy)]); }
   const exits = (x, y) => DIRS.filter(([dx, dy]) => open(grid[y + dy][x + dx])).length;
   const deadEnds = cells.filter(([x, y]) => exits(x, y) === 1);
-  // delivery points: far from the depot and from each other
-  const points = [], used = new Set();
-  const spread = pool => { let best = null, bs = -1; for (const [x, y] of pool) { if (used.has(x + ',' + y) || dist[y][x] < 8) continue;
-    const s = Math.min(Math.hypot(x - depot.i, y - depot.j), ...points.map(p => Math.hypot(x - p.i, y - p.j) * 1.2)); if (s > bs) { bs = s; best = [x, y]; } } return best; };
-  while (points.length < ADDRESSES.length) { const b = spread(deadEnds) || spread(cells); if (!b) break; used.add(b[0] + ',' + b[1]); points.push({ i: b[0], j: b[1] }); }
-  points.forEach((p, n) => Object.assign(p, { x: p.i * TS, z: p.j * TS, letter: 'ABCDEF'[n], name: ADDRESSES[n], order: null }));
-  // gym ducts for the back-room packages, spaced away from everything else
-  const drops = []; points.push({ i: 5, j: 5 }); // count the back room too, so a duct is never next door to it
-  for (const name of ['Iron Temple Gym', 'Pump House Gym']) { const b = spread(cells); if (!b) break; used.add(b[0] + ',' + b[1]);
-    const d = { i: b[0], j: b[1], x: b[0] * TS, z: b[1] * TS, name }; drops.push(d); points.push(d); }
-  points.length -= drops.length + 1;
-  // vents: holes through walls where the walk around is long
+  // two delivery points and one gym duct per district: deep in, spread out, dead ends preferred
+  const used = new Set(), anchors = [[depot.i, depot.j], back, den];
+  const choose = d => { let best = null, bs = -1;
+    for (const [x, y, cd] of cells) { if (cd !== d || used.has(key(x, y)) || dist[y][x] < 5) continue;
+      const sc = Math.min(...anchors.map(a => Math.hypot(x - a[0], y - a[1]))) + (exits(x, y) === 1 ? 1.5 : 0); if (sc > bs) { bs = sc; best = [x, y]; } }
+    if (best) { used.add(key(best[0], best[1])); anchors.push(best); } return best; };
+  const points = [], drops = [];
+  DISTRICTS.forEach((D, d) => { for (let k = 0; k < 2; k++) { const b = choose(d); if (b) points.push({ i: b[0], j: b[1], x: b[0] * TS, z: b[1] * TS, d, letter: 'ABCDEFGH'[d * 2 + k], name: ADDRESSES[d * 2 + k], order: null }); } });
+  DISTRICTS.forEach((D, d) => { const b = choose(d); if (b) drops.push({ i: b[0], j: b[1], x: b[0] * TS, z: b[1] * TS, d, name: D.gym, pay: D.pay }); });
+  // vents: holes through walls where the walk around is long. Most end up between districts, where the walk is via the lobby.
   const vents = [];
   const cand = passages.filter(([x, y, dx, dy]) => grid[y][x] === '#' && grid[y - dy][x - dx] === '.' && grid[y + dy][x + dx] === '.' && !nearRoom(x, y))
     .map(([x, y, dx, dy]) => [x, y, bfs(grid, x - dx, y - dy)[y + dy][x + dx]]).filter(c => c[2] >= 14).sort((a, b) => b[2] - a[2]);
-  for (const [x, y] of cand) { if (vents.length >= 6) break; if (vents.every(v => Math.abs(v[0] - x) + Math.abs(v[1] - y) >= 5)) { vents.push([x, y]); } }
+  for (const [x, y] of cand) { if (vents.length >= 7) break; if (vents.every(v => Math.abs(v[0] - x) + Math.abs(v[1] - y) >= 5)) { vents.push([x, y]); } }
   for (const [x, y] of vents) grid[y][x] = 'v';
-  // sewage channels across straight corridors: one tile wide, always jumpable
+  // sewage channels across straight corridors: one tile wide, always jumpable. The Flood is full of them.
   const wet = shuffle(passages.filter(([x, y, dx, dy]) => grid[y][x] === '.' && !nearRoom(x, y) && grid[y - dy][x - dx] === '.' && grid[y + dy][x + dx] === '.'
-    && grid[y - dx][x - dy] === '#' && grid[y + dx][x + dy] === '#' && !used.has((x - dx) + ',' + (y - dy)) && !used.has((x + dx) + ',' + (y + dy)))).slice(0, 10);
-  for (const [x, y] of wet) grid[y][x] = '~';
-  // creatures, spare rolls, coins
-  const things = [], taken = new Set(used), far = (x, y, n) => things.every(t => Math.abs(t[1] - x) + Math.abs(t[2] - y) >= n);
-  things.push(['M', 18, 12], ['M', 17, 14]); // the mob's den; the other side room is the fixer's back room
-  const kinds = ['R', 'C', 'B', 'R', 'C', 'B', 'R']; // nothing spawns within 9 tiles' walk of the depot
-  for (const [x, y] of shuffle(cells.slice())) { if (!kinds.length) break; if (dist[y][x] >= 9 && !taken.has(x + ',' + y) && far(x, y, 4)) { things.push([kinds.pop(), x, y]); taken.add(x + ',' + y); } }
-  let spare = 0; for (const [x, y] of shuffle(deadEnds.slice())) if (spare < 4 && !taken.has(x + ',' + y)) { things.push(['P', x, y]); taken.add(x + ',' + y); spare++; }
-  let coins = 0; for (const [x, y] of shuffle(cells.slice())) if (coins < 14 && !taken.has(x + ',' + y)) { things.push(['$', x, y]); taken.add(x + ',' + y); coins++; }
+    && grid[y - dx][x - dy] === '#' && grid[y + dx][x + dy] === '#' && !used.has(key(x - dx, y - dy)) && !used.has(key(x + dx, y + dy)))), wetLeft = DISTRICTS.map(D => D.wet);
+  for (const [x, y, dx, dy] of wet) { const d = tileD(x - dx, y - dy); if (d >= 0 && wetLeft[d] > 0) { wetLeft[d]--; grid[y][x] = '~'; } }
+  // creatures by district, spare rolls, coins. Nothing spawns within six tiles' walk of the lobby.
+  const things = [['M', den[0] + 1, den[1] - 1], ['M', den[0], den[1] + 1]], taken = new Set(used), far = (x, y, n) => things.every(t => Math.abs(t[1] - x) + Math.abs(t[2] - y) >= n);
+  DISTRICTS.forEach((D, d) => { const kinds = D.mobs.slice();
+    for (const [x, y, cd] of shuffle(cells.slice())) { if (!kinds.length) break; if (cd === d && dist[y][x] >= 6 && !taken.has(key(x, y)) && far(x, y, 3)) { things.push([kinds.pop(), x, y]); taken.add(key(x, y)); } } });
+  let spare = 0; for (const [x, y] of shuffle(deadEnds.slice())) if (spare < 5 && !taken.has(key(x, y))) { things.push(['P', x, y]); taken.add(key(x, y)); spare++; }
+  let coins = 0; for (const [x, y] of shuffle(cells.slice())) if (coins < 18 && !taken.has(key(x, y))) { things.push(['$', x, y]); taken.add(key(x, y)); coins++; }
   for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) grid[depot.j + dy][depot.i + dx] = 'L'; // lobby floor: creatures will not step on it
-  return { grid, depot: { ...depot, x: depot.i * TS, z: depot.j * TS, px: depot.i * TS - 5.6, pz: depot.j * TS - 5.6 }, points, drops, fixer: { i: 5, j: 5, x: 5 * TS, z: 5 * TS, cool: 0 }, things };
+  DISTRICTS.forEach((D, d) => { if (d) grid[depot.j + D.dir[1] * 3][depot.i + D.dir[0] * 3] = String(d); }); // gates on the three pipes that reputation opens
+  const dmap = grid.map((r, y) => r.map((c, x) => c === 'L' ? -1 : districtOf(Math.round((x - 1) / 2), Math.round((y - 1) / 2))));
+  return { grid, dmap, depot: { ...depot, x: depot.i * TS, z: depot.j * TS, px: depot.i * TS - 5.6, pz: depot.j * TS - 5.6 }, points, drops, fixer: { i: back[0], j: back[1], x: back[0] * TS, z: back[1] * TS, cool: 0 }, things };
 }
 
 /* ---------- world building ---------- */
@@ -246,7 +269,7 @@ function buildWorld() {
   const hats = [0x4f9d5b, 0xe2b23c, 0x3f6fb8, 0xe07a2f, 0x2aa198, 0xb84f8a, 0x7a6ad8], tunics = [0x7a5230, 0x3d6b4f, 0x6b6f78, 0x2f6fa8];
   //            x     z    facing  sits smoke phone
   const crowd = [[-4.6, -1.6, 0.9, 1, -1, 1], [-3.2, -0.6, -2.2, 0, 0, 0], [5.0, -5.4, -0.6, 0, 1, 0], [5.4, 3.6, -1.9, 1, -1, 1],
-    [3.9, 5.0, -2.6, 0, -1, 1], [-5.2, 4.6, 2.2, 1, 2, 0], [3.6, -6.2, 3.14, 0, -1, 0]];
+    [3.9, 5.0, -2.6, 0, -1, 1], [-1.6, 6.0, 2.6, 1, 2, 0], [3.6, -6.2, 3.14, 0, -1, 0]];
   crowd.forEach(([x, z, face, sits, smoke, phone], n) => {
     const m = buildGnome({ npc: true, smoke, phone, hat: lam(hats[n % hats.length]), tunic: lam(tunics[n % tunics.length]) });
     m.position.set(d.x + x, sits ? 0.34 : 0, d.z + z); m.rotation.y = face; g.add(m);
@@ -264,6 +287,22 @@ function buildWorld() {
     tag.position.y = 3.4; tag.scale.setScalar(1.3); p.tag = tag;
     pg.add(p.beam, p.ring, tag); g.add(pg);
   }
+  // the stores, in the lobby's south-west corner: spend banked tips here
+  const sx = d.x - 5.5, sz = d.z + 5.6; G.shop = { x: sx + 0.4, z: sz - 1.5 };
+  g.add(box(2.8, 0.9, 0.8, M.wood, sx, 0.45, sz - 0.6), box(3.2, 0.12, 2.0, M.hat, sx, 2.35, sz - 0.2), box(0.12, 2.3, 0.12, M.wood, sx - 1.5, 1.15, sz - 1.1), box(0.12, 2.3, 0.12, M.wood, sx + 1.5, 1.15, sz - 1.1));
+  for (const [ox, m] of [[-0.8, M.paper], [0, M.blade], [0.8, M.rope]]) g.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.3, 12), m, sx + ox, 1.05, sz - 0.6));
+  const keeper = buildGnome({ npc: true, smoke: 2, hat: M.gold, tunic: M.suit }); keeper.position.set(sx, 0, sz + 0.5); keeper.rotation.y = Math.PI; g.add(keeper);
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(128, c2 => { c2.fillStyle = '#e2b23c'; c2.beginPath(); c2.roundRect(4, 40, 120, 48, 10); c2.fill();
+    c2.fillStyle = '#10201f'; c2.font = `30px ${DISPLAY}`; c2.textAlign = 'center'; c2.textBaseline = 'middle'; c2.fillText('STORES', 64, 66); }) }));
+  sign.position.set(sx, 3.0, sz - 0.2); sign.scale.set(1.5, 1.5, 1); g.add(sign);
+  // gates: bars across the three pipes that reputation opens
+  G.gates = DISTRICTS.map((D, n) => { if (!n) return null;
+    const gate = new THREE.Group(); gate.position.set(d.x + D.dir[0] * 3 * TS, 0, d.z + D.dir[1] * 3 * TS); if (D.dir[0]) gate.rotation.y = Math.PI / 2;
+    for (let k = 0; k < 6; k++) gate.add(mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.6, 6), M.steel, -1.35 + k * 0.54, 1.3, 0));
+    gate.add(box(TS, 0.16, 0.16, M.steel, 0, 2.55, 0), box(TS, 0.16, 0.16, M.steel, 0, 0.5, 0));
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(256, c2 => { c2.fillStyle = '#10201f'; c2.beginPath(); c2.roundRect(8, 78, 240, 100, 16); c2.fill();
+      c2.fillStyle = '#f3efe2'; c2.font = `38px ${DISPLAY}`; c2.textAlign = 'center'; c2.textBaseline = 'middle'; c2.fillText(D.name, 128, 108); c2.fillStyle = '#ffe27a'; c2.font = `30px ${DISPLAY}`; c2.fillText(`Reputation ${D.rep}`, 128, 150); }) }));
+    tag.position.y = 1.6; tag.scale.set(2.6, 2.6, 1); gate.add(tag); g.add(gate); return gate; });
   // gym ducts: square steel, with a grille to post packages through
   const purpleRing = new THREE.MeshBasicMaterial({ color: 0xb98cff, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide });
   for (const dr of G.drops) {
@@ -272,7 +311,7 @@ function buildWorld() {
     dr.beam = mesh(new THREE.CylinderGeometry(0.6, 1.4, 2.6, 4, 1, true), M.glow, 0, 1.3, 0);
     dr.ring = mesh(new THREE.RingGeometry(1.2, 1.45, 28), purpleRing, 0, 0.03, 0).rotateX(-Math.PI / 2);
     dr.tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(64, c2 => { c2.fillStyle = '#8a4fd0'; c2.beginPath(); c2.arc(32, 32, 30, 0, 7); c2.fill();
-      c2.fillStyle = '#f3efe2'; c2.font = `44px ${DISPLAY}`; c2.textAlign = 'center'; c2.textBaseline = 'middle'; c2.fillText('G', 32, 35); }), depthTest: false }));
+      c2.fillStyle = '#f3efe2'; c2.font = `44px ${DISPLAY}`; c2.textAlign = 'center'; c2.textBaseline = 'middle'; c2.fillText('$', 32, 35); }), depthTest: false }));
     dr.tag.position.y = 3.4; dr.tag.scale.setScalar(1.3);
     dg.add(dr.beam, dr.ring, dr.tag); g.add(dg);
   }
@@ -378,36 +417,66 @@ function buildPickup(kind) {
   return g;
 }
 
-/* ---------- shift loading ---------- */
-function loadShift(n) {
-  if (G.group) scene.remove(G.group);
-  for (const q of G.particles) scene.remove(q.mesh);
-  for (const s of G.shots) scene.remove(s.mesh);
-  for (const s of [...G.rings, ...G.clouds]) scene.remove(s.mesh);
-  const world = generate(40 + n);
-  Object.assign(G, { shift: n, grid: world.grid, depot: world.depot, points: world.points, drops: world.drops, fixer: world.fixer, hunt: null, huntTimer: 90, enemies: [], pickups: [], shots: [], particles: [],
-    seen: world.grid.map(r => r.map(() => false)), offers: [], decoy: null, rings: [], clouds: [], delivered: 0, spawned: 0, orderTimer: 0, lastPoint: -1, banner: null, shake: 0, clock: 0, tips: 0 });
+/* ---------- world loading ---------- */
+function spawnEnemies() { // (re)populate the sewers; called on load and every time a run ends
+  for (const e of G.enemies) G.group.remove(e.mesh);
+  G.enemies = [];
+  for (const [kind, i, j] of G.spawns) {
+    const m = buildEnemy(kind); G.group.add(m);
+    G.enemies.push({ kind, x: i * TS, z: j * TS, h: 0, vx: 0, vz: 0, vh: 0, hp: kind === 'C' ? 1 : kind === 'M' ? 3 : 2, wind: 0, dash: 0, cool: 0, lx: 0, lz: 1, fx: 0, fz: 1, onGround: true, stun: 0, flash: 0, wrap: 0, launch: 0,
+      hitBy: 0, timer: (i % 5) * 0.3, home: [i, j], goal: null, from: null, stuck: 0, mesh: m });
+  }
+}
+const revealDistrict = d => G.dmap.forEach((r, j) => r.forEach((v, i) => { if (v === d) G.seen[j][i] = true; }));
+function loadWorld() {
+  const world = generate(41);
+  Object.assign(G, { grid: world.grid, dmap: world.dmap, depot: world.depot, points: world.points, drops: world.drops, fixer: world.fixer, spawns: world.things.filter(t => 'RCBM'.includes(t[0])),
+    hunt: null, huntTimer: 60, enemies: [], pickups: [], shots: [], particles: [], seen: world.grid.map(r => r.map(() => false)), offers: [], decoy: null, rings: [], clouds: [],
+    orderTimer: 0, lastPoint: -1, banner: null, shake: 0, pocket: 0, heat: 0, runRep: 0, out: false, shopOpen: false });
   G.group = buildWorld(); scene.add(G.group);
   const pm = buildGnome(); G.group.add(pm);
   G.player = { isPlayer: true, x: G.depot.x, z: G.depot.z + 1.2, h: 0, vx: 0, vz: 0, vh: 0, ang: Math.PI, fx: 0, fz: -1, onGround: true, sheets: MAX_SHEETS,
-    invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, smoke: G.player ? G.player.smoke : 0, smokeCd: SMOKES.map(() => 0), swing: 0, coyote: 0, jbuf: 0, walk: 0, pkg: null, knife: false, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
-  for (const [kind, i, j] of world.things) {
-    const x = i * TS, z = j * TS;
-    if (kind === 'P' || kind === '$') { const m = buildPickup(kind); G.group.add(m); G.pickups.push({ kind, x, z, mesh: m }); continue; }
-    const m = buildEnemy(kind); G.group.add(m);
-    G.enemies.push({ kind, x, z, h: 0, vx: 0, vz: 0, vh: 0, hp: kind === 'C' ? 1 : kind === 'M' ? 3 : 2, wind: 0, dash: 0, cool: 0, lx: 0, lz: 1, fx: 0, fz: 1, onGround: true, stun: 0, flash: 0, wrap: 0, launch: 0,
-      hitBy: 0, timer: (i % 5) * 0.3, home: [i, j], goal: null, from: null, stuck: 0, mesh: m });
-  }
+    invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, smoke: 0, smokeCd: SMOKES.map(() => 0), swing: 0, coyote: 0, jbuf: 0, walk: 0, pkg: null, knife: SAVE.knife, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
+  for (const [kind, i, j] of world.things) if (kind === 'P' || kind === '$') { const m = buildPickup(kind); G.group.add(m); G.pickups.push({ kind, x: i * TS, z: j * TS, mesh: m }); }
+  spawnEnemies();
+  SAVE.maps.forEach((own, d) => { if (own) revealDistrict(d); });
   spawnOrder(); spawnOrder();
   camReady = false; camYaw = Math.PI;
 }
 /* Orders arrive as offers on the app. Nothing is on the clock until the gnome accepts one. */
-function spawnOrder() {
-  const free = G.points.map((p, n) => n).filter(n => !G.points[n].order && n !== G.lastPoint && !G.offers.some(o => o.n === n));
-  if (!free.length || G.spawned >= TOTAL_ORDERS || G.offers.length >= 3) return;
+function spawnOrder() { // only from districts whose pipe is open
+  let free = G.points.map((p, n) => n).filter(n => !G.points[n].order && SAVE.rep >= DISTRICTS[G.points[n].d].rep && !G.offers.some(o => o.n === n));
+  if (free.length > 1) free = free.filter(n => n !== G.lastPoint);
+  if (!free.length || G.offers.length >= 3) return;
   const n = free[Math.floor(Math.random() * free.length)], need = 3 + Math.floor(Math.random() * 4);
-  G.offers.push({ n, need }); G.spawned++; G.orderTimer = 0;
+  G.offers.push({ n, need }); G.orderTimer = 0;
   if (G.state === 'play') { G.banner = { text: `App ping: ${G.points[n].name} wants ${need} sheets`, t: 2.4 }; blip(520, 0.08, 'triangle', 200); setTimeout(() => blip(520, 0.08, 'triangle', 200), 140); }
+}
+const tipOf = pt => Math.round((4 + pt.order.need + Math.ceil(pt.order.bonus)) * DISTRICTS[pt.d].mult);
+const heatUp = n => { G.heat = Math.min(100, G.heat + n); };
+
+/* Walking back into the lobby ends the run: the pocket is banked, heat clears, the sewers repopulate. */
+function bankRun() {
+  const got = G.pocket, rep = G.runRep, before = SAVE.rep;
+  SAVE.bank += got; SAVE.rep += rep; G.pocket = 0; G.runRep = 0; G.heat = 0; G.out = false; G.hunt = null; G.huntTimer = 60; save();
+  spawnEnemies();
+  const opened = DISTRICTS.filter(D => D.rep > before && D.rep <= SAVE.rep);
+  if (opened.length) { say(`The ${opened[opened.length - 1].name} pipe is open!  Banked +${got}`, 4); blip(523, 0.12, 'triangle'); setTimeout(() => blip(784, 0.3, 'triangle'), 130); }
+  else if (got || rep) { say(`Home safe. Banked +${got} tips${rep ? `, reputation +${rep}` : ''}`, 2.8); blip(660, 0.15, 'triangle', 200); }
+}
+/* The stores: what is still for sale, in the order the number keys buy it. */
+function shopItems() {
+  const it = [];
+  SMOKES.forEach((k, n) => { if (!SAVE.smokes[n]) it.push({ label: `${k.name}: ${k.hint}`, cost: [0, 20, 35, 50][n], buy: () => { SAVE.smokes[n] = true; G.player.smoke = n; } }); });
+  if (SAVE.roll < 2) it.push({ label: `Bigger roll: ${[16, 20][SAVE.roll]} sheets`, cost: [40, 90][SAVE.roll], buy: () => { SAVE.roll++; MAX_SHEETS = [12, 16, 20][SAVE.roll]; G.player.sheets = MAX_SHEETS; } });
+  if (!SAVE.knife) it.push({ label: 'Knife: faster, sharper swings', cost: 35, buy: () => { SAVE.knife = G.player.knife = true; } });
+  DISTRICTS.forEach((D, d) => { if (!SAVE.maps[d] && SAVE.rep >= D.rep) it.push({ label: `Map of ${D.name}`, cost: 15, buy: () => { SAVE.maps[d] = true; revealDistrict(d); } }); });
+  return it;
+}
+function buyItem(n) {
+  const it = shopItems()[n]; if (!it) return;
+  if (SAVE.bank < it.cost) { say(`That costs ${it.cost}. The bank holds ${SAVE.bank}.`, 1.8); return; }
+  SAVE.bank -= it.cost; it.buy(); save(); say(`Bought: ${it.label}`, 2.2); blip(880, 0.1, 'triangle', 300);
 }
 
 /* ---------- input ---------- */
@@ -417,13 +486,15 @@ const KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'ri
 function press(k) { if (!held[k]) pressed[k] = true; held[k] = true; audioInit(); }
 function release(k) { held[k] = false; }
 addEventListener('keydown', e => { const k = KEYMAP[e.code]; if (k) { press(k); e.preventDefault(); }
-  const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code); if (n >= 0 && G.player) G.player.smoke = n; });
+  if (/^Digit[1-9]$/.test(e.code)) pressed['n' + (+e.code[5] - 1)] = true; });
 addEventListener('keyup', e => { const k = KEYMAP[e.code]; if (k) release(k); });
 addEventListener('blur', () => { for (const k in held) held[k] = false; });
 stage.addEventListener('pointerdown', e => {
   if (e.target.tagName === 'CANVAS') { // tapping the smoke chip in the HUD swaps smokes
     const r = stage.getBoundingClientRect(), k = r.width / LW, x = (e.clientX - r.left) / k, y = (e.clientY - r.top) / k;
-    if (G.state === 'play' && x > 12 && x < 234 && y > 60 && y < 98) pressed.swap = true;
+    const sr = G.shopRect;
+    if (G.state === 'play' && G.shopOpen && sr && x > sr.x && x < sr.x + sr.w && y > sr.y && y < sr.y + sr.n * 24) pressed['n' + Math.floor((y - sr.y) / 24)] = true; // tapping a row in the stores buys it
+    else if (G.state === 'play' && x > 12 && x < 234 && y > 60 && y < 98) pressed.swap = true;
     else if (G.state === 'play' && x > 12 && x < 234 && y >= 98 && y < 100 + (G.panelH || 0)) pressed.accept = true; // tapping the order list accepts the next offer
     else { pressed.confirm = true; if (G.state === 'play') { camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY }; stage.setPointerCapture(e.pointerId); } }
   }
@@ -475,6 +546,7 @@ function blip(freq, dur, type = 'square', slide = 0, vol = 0.05) {
 function solid(c, e) {
   if (c === '#') return true;
   if (c === 'L') return !e.isPlayer; // the lobby is for couriers only
+  if (c === '1' || c === '2' || c === '3') return !e.isPlayer || SAVE.rep < DISTRICTS[+c].rep; // a pipe gate: shut until the reputation is there
   if (c === 'v') return !e.isPlayer || e.sheets > VENT_MAX;
   if (c === '~') return !e.isPlayer && e.onGround && e.stun <= 0 && !e.launch;
   return false;
@@ -582,10 +654,12 @@ function updateSmokes(dt) {
 
 function knockout(msg) {
   const p = G.player;
-  G.tips = Math.max(0, G.tips - 5); G.hunt = null; G.huntTimer = 70;
+  const lost = G.pocket; G.pocket = 0; G.runRep = 0; G.heat = 0; G.out = false; G.hunt = null; G.huntTimer = 60; // the pocket is gone; the bank is safe
+  if (lost) msg += `, lost the ${lost} tips in your pocket`;
   if (p.pkg) { p.pkg = null; msg += ', package lost'; }
+  spawnEnemies();
   Object.assign(p, { x: G.depot.x, z: G.depot.z + 1.2, h: 0, vx: 0, vz: 0, vh: 0, invuln: 2.5, knock: 0, safe: { x: G.depot.x, z: G.depot.z } });
-  say(msg, 3); blip(160, 0.5, 'sawtooth', -100); G.shake = 0.3;
+  say(msg, 3.5); blip(160, 0.5, 'sawtooth', -100); G.shake = 0.3;
   camReady = false;
 }
 /* Humans above: a reticle hunts the gnome. A few shots, then a hand comes down. Vents and smoke break the line of sight. */
@@ -601,7 +675,8 @@ function updateHunt(dt) {
   const p = G.player; let h = G.hunt;
   if (!h) {
     if (tileAt(p.x, p.z) === 'L') return; // nobody is hunted in the lobby
-    G.huntTimer -= dt * (p.pkg ? 2 : 1); // carrying a package draws attention
+    if (G.heat < 20) return; // humans only come looking once there is heat
+    G.huntTimer -= dt * (G.heat / 35) * (p.pkg ? 1.5 : 1); // hotter means sooner; carrying a package draws attention
     if (G.huntTimer > 0) return;
     h = G.hunt = { x: p.x - p.fx * 4, z: p.z - p.fz * 4, phase: 'track', timer: 1.8, shots: 0, lost: 0, flash: 0 };
     say('A human spotted you! Keep moving, or hide in a vent or smoke', 3.5); blip(90, 0.6, 'sawtooth', 40, 0.07);
@@ -609,7 +684,7 @@ function updateHunt(dt) {
   const covered = 'vL'.includes(tileAt(p.x, p.z)) || inCloud(p.x, p.z);
   h.lost = covered ? h.lost + dt : 0; h.flash -= dt;
   const dx = p.x - h.x, dz = p.z - h.z, d = Math.hypot(dx, dz) || 0.001;
-  const end = msg => { G.hunt = null; G.huntTimer = 70 + Math.random() * 30; if (msg) say(msg, 2.2); };
+  const end = msg => { G.hunt = null; G.huntTimer = 60; if (msg) say(msg, 2.2); };
   if (h.phase !== 'slam' && h.lost > 1.5) return end('The human lost you');
   if ((h.phase === 'track' || h.phase === 'grab') && !covered) { const sp = Math.min(d, (h.phase === 'grab' ? 4.0 : 4.6) * dt); h.x += dx / d * sp; h.z += dz / d * sp; }
   if ((h.timer -= dt) > 0) return;
@@ -620,14 +695,14 @@ function updateHunt(dt) {
     if (d < 1.25 && !covered && p.invuln <= 0) { say('Shot! −3 sheets', 1.4); p.invuln = 1; loseSheets(3); }
   } else if (h.phase === 'grab') {
     h.phase = 'slam'; h.timer = 0.5; G.shake = 0.4; blip(60, 0.3, 'sine', -20, 0.1);
-    if (d < 1.6 && !covered) knockout('Caught by a human! Dumped at the depot, −5 tips');
+    if (d < 1.6 && !covered) knockout('Caught by a human! Dumped at the lobby');
   } else end();
 }
 
 function loseSheets(n) {
   const p = G.player;
   G.shake = 0.3;
-  if (p.sheets === 0) { knockout('Knocked out! Dragged back to the depot, −5 tips'); return; } // nothing left to protect you
+  if (p.sheets === 0) { knockout('Knocked out! Dragged back to the lobby'); return; } // nothing left to protect you
   p.sheets = Math.max(0, p.sheets - n);
   burst('sheet', p.x, p.h + 0.8, p.z, n * 3);
 }
@@ -651,10 +726,14 @@ function updatePlayer(dt) {
   step(p, dt);
   // the camera swings in behind the gnome; running straight at it leaves it alone, so there is no spinning
   if ((camHold -= dt) <= 0) camYaw += 2.0 * Math.sin(p.ang - camYaw) * Math.min(1, Math.hypot(p.vx, p.vz) / RUN) * dt;
+  if (p.bump && '123'.includes(p.bump) && !(G.banner && G.banner.vent)) { const D = DISTRICTS[+p.bump]; G.banner = { text: `${D.name} opens at reputation ${D.rep}. You have ${SAVE.rep}.`, t: 2, vent: true }; }
   if (p.bump === 'v' && !(G.banner && G.banner.vent)) G.banner = { text: `Roll too big for the vent: ${VENT_MAX} sheets or fewer`, t: 1.6, vent: true };
   p.walk = p.onGround && Math.hypot(p.vx, p.vz) > 0.8 ? p.walk + dt * 13 : 0;
   const ti = Math.round(p.x / TS), tj = Math.round(p.z / TS), here = tileAt(p.x, p.z);
   if (p.onGround && p.knock <= 0 && here !== '~') p.safe = { x: ti * TS, z: tj * TS };
+  // out in the sewers heat creeps up (fast under the High Street); stepping back into the lobby banks the run
+  if (here !== 'L') { G.out = true; heatUp(dt * (G.dmap[tj] && G.dmap[tj][ti] === 3 ? 1.1 : 0.12)); }
+  else if (G.out) bankRun();
   for (let j = tj - 3; j <= tj + 3; j++) for (let i = ti - 3; i <= ti + 3; i++) if (G.seen[j] && i >= 0 && i < W && Math.hypot(i - ti, j - tj) < 3.4) G.seen[j][i] = true;
 
   p.cooldown -= dt; p.attack -= dt; p.invuln -= dt; p.throwCd -= dt;
@@ -671,7 +750,10 @@ function updatePlayer(dt) {
     }
   }
   for (let i = 0; i < SMOKES.length; i++) p.smokeCd[i] -= dt;
-  if (pressed.swap) { p.smoke = (p.smoke + 1) % SMOKES.length; blip(400, 0.05, 'square', 100, 0.03); }
+  if (pressed.swap) { do { p.smoke = (p.smoke + 1) % SMOKES.length; } while (!SAVE.smokes[p.smoke]); blip(400, 0.05, 'square', 100, 0.03);
+    if (SAVE.smokes.filter(Boolean).length === 1) say('Only the cigarette so far. The stores sell more.', 1.8); }
+  G.shopOpen = Math.hypot(p.x - G.shop.x, p.z - G.shop.z) < 2.6;
+  for (let n = 0; n < 9; n++) if (pressed['n' + n]) { if (G.shopOpen) buyItem(n); else if (n < 4 && SAVE.smokes[n]) p.smoke = n; } // number keys: buy at the stores, pick a smoke elsewhere
   if (pressed.smoke) useSmoke();
   if (pressed.accept) {
     const o = G.offers[0];
@@ -689,23 +771,23 @@ function updatePlayer(dt) {
     if (k.kind === 'P' && p.sheets >= MAX_SHEETS) continue;
     k.taken = true; k.mesh.visible = false; burst('star', k.x, 0.8, k.z, 8, 3);
     if (k.kind === 'P') { p.sheets = Math.min(MAX_SHEETS, p.sheets + 3); blip(660, 0.1, 'triangle', 300); }
-    else if (k.kind === 'K') { p.knife = true; say('Took the knife: faster, sharper swings', 2.2); blip(900, 0.1, 'square', 300, 0.04); }
-    else { G.tips += 2; blip(880, 0.07, 'square', 400, 0.03); }
+    else if (k.kind === 'K') { p.knife = SAVE.knife = true; save(); say('Took the knife: faster, sharper swings', 2.2); blip(900, 0.1, 'square', 300, 0.04); }
+    else { G.pocket += 2; blip(880, 0.07, 'square', 400, 0.03); }
   }
   // depot restock
   if (Math.hypot(p.x - G.depot.px, p.z - G.depot.pz) < 2.8 && p.sheets < MAX_SHEETS) { p.sheets = MAX_SHEETS; say('Fresh roll loaded'); blip(440, 0.1, 'triangle', 220); }
   // back room: the fixer hands out steroid packages for the gyms. The duct is narrow, so the roll must be slim to post one.
   const fixer = G.fixer; fixer.cool -= dt;
   if (!p.pkg && fixer.cool <= 0 && G.drops.length && Math.hypot(p.x - fixer.x, p.z - fixer.z) < 2) {
-    const n = Math.floor(Math.random() * G.drops.length); p.pkg = { drop: n };
-    say(`Steroids for ${G.drops[n].name}. Post them down the gym duct.`, 3.5); blip(300, 0.15, 'triangle', -100);
-    G.huntTimer = Math.min(G.huntTimer, 30);
+    const ok = G.drops.map((dr, n) => n).filter(n => SAVE.rep >= DISTRICTS[G.drops[n].d].rep), n = ok[Math.floor(Math.random() * ok.length)]; p.pkg = { drop: n };
+    say(`Steroids for ${G.drops[n].name}, ${DISTRICTS[G.drops[n].d].name}. Post them down the gym duct.`, 3.5); blip(300, 0.15, 'triangle', -100);
+    heatUp(15);
   }
   if (p.pkg) {
     const dr = G.drops[p.pkg.drop];
     if (Math.hypot(p.x - dr.x, p.z - dr.z) > 1.7 || !p.onGround) dr.warned = false;
     else if (p.sheets > VENT_MAX) { if (!dr.warned) { dr.warned = true; say(`The duct is tight: ${VENT_MAX} sheets or fewer to post it`, 2.4); } }
-    else { p.pkg = null; G.tips += 25; fixer.cool = 8; burst('star', dr.x, 1.5, dr.z, 16, 4); say(`Package posted to ${dr.name}  +25 tips`, 2.6);
+    else { p.pkg = null; G.pocket += dr.pay; G.runRep += 2; heatUp(20); fixer.cool = 8; burst('star', dr.x, 1.5, dr.z, 16, 4); say(`Package posted to ${dr.name}  +${dr.pay} in your pocket`, 2.6);
       blip(392, 0.12, 'triangle'); setTimeout(() => blip(587, 0.25, 'triangle'), 120); }
   }
   // deliveries
@@ -714,20 +796,19 @@ function updatePlayer(dt) {
     o.bonus = Math.max(0, o.bonus - dt / 10);
     if (Math.hypot(p.x - pt.x, p.z - pt.z) > 1.7 || !p.onGround) { o.warned = false; continue; }
     if (p.sheets < o.need) { if (!o.warned) { o.warned = true; say(`${pt.name} needs ${o.need} sheets. You have ${p.sheets}.`, 2.4); } continue; }
-    const tip = 4 + o.need + Math.ceil(o.bonus);
-    p.sheets -= o.need; G.tips += tip; G.delivered++; pt.order = null; G.lastPoint = G.points.indexOf(pt);
+    const tip = tipOf(pt);
+    p.sheets -= o.need; G.pocket += tip; G.runRep++; heatUp(12); pt.order = null; G.lastPoint = G.points.indexOf(pt);
     burst('star', pt.x, 1.5, pt.z, 14, 4); burst('sheet', pt.x, 1.5, pt.z, 6, 3);
-    say(`Delivered to ${pt.name}  +${tip} tips`, 2.4);
+    say(`Delivered to ${pt.name}  +${tip} in your pocket`, 2.4);
     blip(523, 0.12, 'triangle'); setTimeout(() => blip(659, 0.12, 'triangle'), 110); setTimeout(() => blip(784, 0.25, 'triangle'), 220);
-    if (G.delivered >= TOTAL_ORDERS) { G.state = 'end'; G.t = 0; }
-    else if (!G.points.some(q => q.order) && !G.offers.length) spawnOrder();
+    if (!G.points.some(q => q.order) && !G.offers.length) spawnOrder();
   }
 }
 
 function defeat(e, tip) {
   if (e.dead) return;
   if (e.kind === 'M' && !G.player.knife) { const m = buildPickup('K'); G.group.add(m); G.pickups.push({ kind: 'K', x: e.x, z: e.z, mesh: m }); } // mob gnomes drop their knife
-  e.dead = true; burst('poof', e.x, e.h + 0.4, e.z, 10, 3.5); if (e.wrap || e.launch) burst('sheet', e.x, 0.6, e.z, 5, 3); G.tips += tip; }
+  e.dead = true; burst('poof', e.x, e.h + 0.4, e.z, 10, 3.5); if (e.wrap || e.launch) burst('sheet', e.x, 0.6, e.z, 5, 3); G.pocket += tip; if (e.kind === 'M') heatUp(4); }
 function updateEnemies(dt) {
   const p = G.player;
   for (const e of G.enemies) {
@@ -755,20 +836,20 @@ function updateEnemies(dt) {
       if (dc) { const ex = dc.x - e.x, ez = dc.z - e.z, ed = Math.hypot(ex, ez) || 0.001; if (ed < 13 && sight(e.x, e.z, dc.x, dc.z)) { tx = ex; tz = ez; td = ed; lured = true; } }
       if (lured && td < 0.9) { popDecoy(); e.stun = 1.8; e.vx = e.vz = 0; blip(150, 0.2, 'sine', -60, 0.05); } // caught a lungful
       // creatures need the gnome in view for a moment before they react, and give up once it is out of sight
-      const spotted = !(e.mellow > 0) && (lured || (!inCloud(p.x, p.z) && d < 7.5 && sight(e.x, e.z, p.x, p.z)));
+      const spotted = !(e.mellow > 0) && (lured || (!inCloud(p.x, p.z) && d < 7.5 + G.heat * 0.035 && sight(e.x, e.z, p.x, p.z))); // heat sharpens them
       e.alert = spotted ? Math.min(1.6, (e.alert || 0) + dt) : Math.max(0, (e.alert || 0) - dt * 0.6);
-      const sees = spotted && (lured || e.alert > 0.9);
+      const sees = spotted && (lured || e.alert > 0.9 - G.heat * 0.006);
       if (e.kind === 'B') { // clogling: sits, then hops at the gnome
         if (e.onGround) { e.vx = e.vz = 0; if (e.timer > 2.2 && sees) { e.timer = 0; e.vx = tx / td * 3.4; e.vz = tz / td * 3.4; e.vh = 8.5; e.fx = tx / td; e.fz = tz / td; } }
       } else {
         let wx = 0, wz = 0;
         const speed = e.kind === 'R' ? [1.3, 2.6] : e.kind === 'M' ? [1.5, 3.0] : [2.4, 3.6];
-        if (sees) { wx = tx / td * speed[1]; wz = tz / td * speed[1]; if (e.kind === 'C') { wx += Math.sin(e.timer * 9) * 2 * tz / td; wz -= Math.sin(e.timer * 9) * 2 * tx / td; } e.goal = null; }
+        if (sees) { const hot = 1 + G.heat * 0.003; wx = tx / td * speed[1] * hot; wz = tz / td * speed[1] * hot; if (e.kind === 'C') { wx += Math.sin(e.timer * 9) * 2 * tz / td; wz -= Math.sin(e.timer * 9) * 2 * tx / td; } e.goal = null; }
         else { // wander tile to tile
           const ti = Math.round(e.x / TS), tj = Math.round(e.z / TS);
           if (!e.goal || Math.hypot(e.goal[0] * TS - e.x, e.goal[1] * TS - e.z) < 0.25 || (e.stuck += dt) > 3) {
             let opts = DIRS.map(([a, b]) => [ti + a, tj + b]).filter(([a, b]) => G.grid[b] && G.grid[b][a] === '.');
-            if (e.kind === 'M') { const near = opts.filter(([a, b]) => Math.abs(a - e.home[0]) + Math.abs(b - e.home[1]) <= 2); if (near.length) opts = near; } // the mob stays by its den
+            if (e.kind === 'M') { const near = opts.filter(([a, b]) => Math.abs(a - e.home[0]) + Math.abs(b - e.home[1]) <= 2 + Math.floor(G.heat / 30)); if (near.length) opts = near; } // the mob stays by its den
             const fresh = opts.filter(([a, b]) => !e.from || a !== e.from[0] || b !== e.from[1]); if (fresh.length) opts = fresh;
             e.from = [ti, tj]; e.goal = opts.length ? opts[Math.floor(Math.random() * opts.length)] : [ti, tj]; e.stuck = 0;
           }
@@ -785,7 +866,7 @@ function updateEnemies(dt) {
       }
     }
     step(e, dt);
-    if (e.h < -0.7) { e.dead = true; burst('splash', e.x, -0.3, e.z, 8, 4); G.tips += 1; continue; }
+    if (e.h < -0.7) { e.dead = true; burst('splash', e.x, -0.3, e.z, 8, 4); G.pocket += 1; continue; }
     if (whacked) {
       e.hitBy = p.swing; e.hp -= p.knife ? 2 : 1; e.wind = e.dash = 0; e.flash = 0.18; e.stun = 0.4; e.vx = -dx / d * 7 + p.fx * 3; e.vz = -dz / d * 7 + p.fz * 3; e.vh = 5; e.onGround = false;
       blip(120, 0.1, 'square', -40, 0.06);
@@ -813,7 +894,7 @@ function update(dt) {
   const go = pressed.confirm || pressed.jump;
   if (G.state === 'title') {
     G.player.walk += dt * 13;
-    if (go) { loadShift(1); G.state = 'brief'; G.t = 0; }
+    if (go) { G.state = 'brief'; G.t = 0; }
   } else if (G.state === 'brief') {
     if (go && G.t > 0.3) { G.state = 'play'; pressed.jump = false; const p = G.player; p.ang = Math.PI; p.fx = 0; p.fz = -1; }
   } else if (G.state === 'play') {
@@ -823,8 +904,6 @@ function update(dt) {
     if (G.state === 'play') { updateDecoy(dt); updateSmokes(dt); updateHunt(dt); if (G.state === 'play') updateEnemies(dt); }
     if (G.banner && (G.banner.t -= dt) <= 0) G.banner = null;
     G.shake = Math.max(0, G.shake - dt);
-  } else if (G.state === 'end') {
-    if (go && G.t > 0.8) { loadShift(G.shift + 1); G.state = 'brief'; G.t = 0; }
   }
   updateParticles(dt);
   for (const k in pressed) pressed[k] = false;
@@ -867,6 +946,7 @@ function present(dt) {
     if (c.smokes && Math.random() < dt * 0.5) burst('smoke', c.x + Math.sin(c.mesh.rotation.y) * 0.5, c.y + 0.95, c.z + Math.cos(c.mesh.rotation.y) * 0.5, 1, 0.5); }
   G.drops.forEach((dr, n) => { dr.beam.visible = dr.ring.visible = dr.tag.visible = !!p.pkg && p.pkg.drop === n; });
   G.fixer.ring.visible = !p.pkg && G.fixer.cool <= 0;
+  G.gates.forEach((gate, d) => { if (gate) gate.visible = SAVE.rep < DISTRICTS[d].rep; });
   const hu = G.state === 'play' ? G.hunt : null;
   HUNT.ring.visible = !!hu && hu.phase !== 'slam'; HUNT.beam.visible = !!hu && hu.flash > 0; HUNT.hand.visible = !!hu && (hu.phase === 'grab' || hu.phase === 'slam');
   if (hu) {
@@ -914,7 +994,7 @@ function drawMap(x0, y0, c) {
   panel(x0 - 6, y0 - 6, W * c + 12, H * c + 12);
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     const ch = G.grid[j][i]; if (!G.seen[j][i] || ch === '#') continue;
-    ctx.fillStyle = ch === '~' ? '#8aa63c' : ch === 'v' ? '#d5dcdc' : ch === 'L' ? '#a9793f' : '#4f6d63'; ctx.fillRect(x0 + i * c, y0 + j * c, c, c);
+    ctx.fillStyle = ch === '~' ? '#8aa63c' : ch === 'v' ? '#d5dcdc' : ch === 'L' ? '#a9793f' : '123'.includes(ch) && SAVE.rep < DISTRICTS[+ch].rep ? '#d8432f' : (DISTRICTS[G.dmap[j][i]] || DISTRICTS[0]).tint; ctx.fillRect(x0 + i * c, y0 + j * c, c, c);
   }
   ctx.fillStyle = '#ffe27a'; ctx.fillRect(x0 + (G.depot.i - 2) * c, y0 + (G.depot.j - 2) * c, c, c); // roll pallet
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -934,8 +1014,9 @@ function drawHUD() {
   ctx.textBaseline = 'middle';
   // roll gauge, with the vent line
   panel(12, 12, 222, 46); drawRoll(30, 29, 10);
-  for (let i = 0; i < MAX_SHEETS; i++) { ctx.fillStyle = i < p.sheets ? '#f7f4ea' : 'rgba(247,244,234,0.15)'; ctx.fillRect(48 + i * 15, 18, 12, 18); }
-  const fits = p.sheets <= VENT_MAX, vx = 48 + VENT_MAX * 15 - 1.5;
+  const st = 180 / MAX_SHEETS;
+  for (let i = 0; i < MAX_SHEETS; i++) { ctx.fillStyle = i < p.sheets ? '#f7f4ea' : 'rgba(247,244,234,0.15)'; ctx.fillRect(48 + i * st, 18, st - 3, 18); }
+  const fits = p.sheets <= VENT_MAX, vx = 48 + VENT_MAX * st - 1.5;
   ctx.fillStyle = fits ? '#58e070' : '#ff6a55'; ctx.fillRect(vx - 1, 14, 2, 26);
   ctx.textAlign = 'left'; text(fits ? 'Fits through vents' : `Too big for vents (max ${VENT_MAX})`, 48, 49, `800 11px ${BODY}`, fits ? '#58e070' : '#ff8a78');
   // current smoke: tap it (or Q) to swap
@@ -947,21 +1028,26 @@ function drawHUD() {
   ctx.save(); ctx.translate(0, 36);
   // orders
   const orders = G.points.filter(q => q.order), offers = G.offers, ow = 222, quiet = !orders.length && !offers.length, slots = orders.length + offers.length + (quiet ? 1 : 0);
-  G.panelH = 26 + (slots + 1) * 22; panel(12, 64, ow, G.panelH);
-  ctx.textAlign = 'left'; text(`Orders  ${G.delivered}/${TOTAL_ORDERS} done`, 22, 78, `14px ${DISPLAY}`, '#f3efe2');
-  ctx.textAlign = 'right'; text(`${G.tips} tips`, 12 + ow - 10, 78, `14px ${DISPLAY}`, '#ffe27a');
-  if (quiet) { ctx.textAlign = 'left'; text('No pings yet. Hang about.', 22, 101, `600 12px ${BODY}`, '#8fa9a2'); }
+  G.panelH = 42 + (slots + 1) * 22; panel(12, 64, ow, G.panelH);
+  // money and heat: the pocket is at risk until it is walked home
+  ctx.textAlign = 'left'; text(`Pocket ${G.pocket}`, 22, 78, `14px ${DISPLAY}`, '#ffe27a');
+  ctx.textAlign = 'right'; text(`Bank ${SAVE.bank}`, 12 + ow - 10, 78, `14px ${DISPLAY}`, '#f3efe2');
+  ctx.textAlign = 'left'; text('HEAT', 22, 95, `800 10px ${BODY}`, '#8fa9a2');
+  ctx.fillStyle = 'rgba(247,244,234,0.15)'; ctx.fillRect(56, 92, ow - 54, 6);
+  ctx.fillStyle = G.heat < 35 ? '#8fb26a' : G.heat < 70 ? '#e2b23c' : '#d8432f'; ctx.fillRect(56, 92, (ow - 54) * G.heat / 100, 6);
+  ctx.fillStyle = '#f3efe2'; ctx.fillRect(56 + (ow - 54) * 0.2, 90, 1.5, 10); // humans start looking past this mark
+  if (quiet) { ctx.textAlign = 'left'; text('No pings yet. Hang about.', 22, 117, `600 12px ${BODY}`, '#8fa9a2'); }
   const short = s => s.length > 17 ? s.slice(0, 16) + '…' : s;
   orders.forEach((pt, n) => { // accepted
-    const y = 101 + n * 22, ok = p.sheets >= pt.order.need;
+    const y = 117 + n * 22, ok = p.sheets >= pt.order.need;
     ctx.fillStyle = '#d8432f'; ctx.beginPath(); ctx.arc(30, y, 8, 0, 7); ctx.fill();
     ctx.textAlign = 'center'; text(pt.letter, 30, y + 0.5, `11px ${DISPLAY}`, '#f3efe2');
     ctx.textAlign = 'left'; text(short(pt.name), 44, y, `800 12px ${BODY}`, '#f3efe2');
     ctx.textAlign = 'right'; text(`${pt.order.need} sheets`, 12 + ow - 34, y, `800 12px ${BODY}`, ok ? '#58e070' : '#e2b23c');
-    text(`+${4 + pt.order.need + Math.ceil(pt.order.bonus)}`, 12 + ow - 10, y, `800 12px ${BODY}`, '#ffe27a');
+    text(`+${tipOf(pt)}`, 12 + ow - 10, y, `800 12px ${BODY}`, '#ffe27a');
   });
   offers.forEach((o, n) => { // on the app, not yet accepted: the first one is taken with F or a tap
-    const pt = G.points[o.n], y = 101 + (orders.length + n) * 22;
+    const pt = G.points[o.n], y = 117 + (orders.length + n) * 22;
     ctx.strokeStyle = '#d8432f'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(30, y, 7.5, 0, 7); ctx.stroke();
     ctx.textAlign = 'center'; text(pt.letter, 30, y + 0.5, `11px ${DISPLAY}`, '#f3efe2');
     ctx.textAlign = 'left'; text(short(pt.name), 44, y, `600 12px ${BODY}`, '#a9bcb6');
@@ -969,14 +1055,27 @@ function drawHUD() {
     if (n === 0) { ctx.fillStyle = '#ffe27a'; ctx.beginPath(); ctx.roundRect(12 + ow - 28, y - 8, 18, 16, 4); ctx.fill(); ctx.textAlign = 'center'; text('F', 12 + ow - 19, y + 0.5, `11px ${DISPLAY}`, '#10201f'); }
   });
   { // the back-room job, always the last row
-    const y = 101 + slots * 22;
+    const y = 117 + slots * 22;
     ctx.fillStyle = '#8a4fd0'; ctx.beginPath(); ctx.arc(30, y, 8, 0, 7); ctx.fill();
-    ctx.textAlign = 'center'; text('G', 30, y + 0.5, `11px ${DISPLAY}`, '#f3efe2');
+    ctx.textAlign = 'center'; text('$', 30, y + 0.5, `11px ${DISPLAY}`, '#f3efe2');
     ctx.textAlign = 'left'; text(p.pkg ? `Steroids: ${G.drops[p.pkg.drop].name}` : G.fixer.cool <= 0 ? 'Back room has a package' : 'Back room: come back soon', 44, y, `800 12px ${BODY}`, p.pkg ? '#d9c2ff' : '#b79be0');
-    if (p.pkg) { ctx.textAlign = 'right'; text('+25', 12 + ow - 10, y, `800 12px ${BODY}`, '#ffe27a'); }
+    if (p.pkg) { ctx.textAlign = 'right'; text(`+${G.drops[p.pkg.drop].pay}`, 12 + ow - 10, y, `800 12px ${BODY}`, '#ffe27a'); }
   }
   ctx.restore();
   const c = narrow ? 5 : 7; drawMap(LW - W * c - 18, 18, c);
+  if (!G.hunt) { const dn = G.dmap[Math.round(p.z / TS)][Math.round(p.x / TS)], hw = W * c + 12, hx = LW - W * c - 24, hy = 18 + H * c + 12; // where you are
+    panel(hx, hy, hw, 24); ctx.textAlign = 'center'; text(dn < 0 ? `Lobby · reputation ${SAVE.rep}` : DISTRICTS[dn].name, hx + hw / 2, hy + 13, `${narrow ? 10 : 13}px ${DISPLAY}`, '#f3efe2'); }
+  if (G.shopOpen) { // the stores
+    const items = shopItems(), w = Math.min(340, LW - 24), x = LW / 2 - w / 2, h = 62 + Math.max(1, items.length) * 24, y = Math.max(narrow ? 250 : 90, LH / 2 - h / 2), next = DISTRICTS.find(D => D.rep > SAVE.rep);
+    ctx.fillStyle = '#f3efe2'; ctx.beginPath(); ctx.roundRect(x, y, w, h, 10); ctx.fill();
+    ctx.textAlign = 'left'; text('Stores', x + 14, y + 20, `20px ${DISPLAY}`, '#10201f'); ctx.textAlign = 'right'; text(`Bank ${SAVE.bank}`, x + w - 14, y + 20, `16px ${DISPLAY}`, '#d8432f');
+    ctx.textAlign = 'left'; text(`Reputation ${SAVE.rep}` + (next ? ` · ${next.name} opens at ${next.rep}` : ' · every pipe is open'), x + 14, y + 40, `600 11px ${BODY}`, '#5b6f6a');
+    G.shopRect = { x, y: y + 50, w, n: items.length };
+    if (!items.length) text('Sold out. Nice work.', x + 14, y + 64, `800 13px ${BODY}`, '#10201f');
+    items.forEach((it, n) => { const ry = y + 62 + n * 24, can = SAVE.bank >= it.cost;
+      ctx.fillStyle = '#10201f'; ctx.beginPath(); ctx.roundRect(x + 12, ry - 9, 18, 18, 4); ctx.fill(); ctx.textAlign = 'center'; text(String(n + 1), x + 21, ry + 0.5, `12px ${DISPLAY}`, '#f3efe2');
+      ctx.textAlign = 'left'; text(it.label, x + 38, ry, `800 13px ${BODY}`, can ? '#10201f' : '#8a938f'); ctx.textAlign = 'right'; text(String(it.cost), x + w - 14, ry, `15px ${DISPLAY}`, can ? '#2e8b47' : '#b0563f'); });
+  }
   if (G.hunt) { const hw = W * c + 12, hx = LW - W * c - 24, hy = 18 + H * c + 12;
     ctx.fillStyle = Math.floor(now() * 4) % 2 ? '#d8432f' : '#a52f20'; ctx.beginPath(); ctx.roundRect(hx, hy, hw, 26, 8); ctx.fill();
     ctx.textAlign = 'center'; text(G.hunt.phase === 'grab' || G.hunt.phase === 'slam' ? 'HAND COMING DOWN' : 'HUMAN ABOVE', hx + hw / 2, hy + 14, `${narrow ? 11 : 14}px ${DISPLAY}`, '#f3efe2'); }
@@ -1017,36 +1116,24 @@ function overlay() {
     text('Emergency toilet paper, straight up the pipe.', LW / 2, 160 * big + 8, `800 ${Math.max(13, 17 * big)}px ${BODY}`, '#c9d8d3');
     if (Math.floor(now() * 2) % 2) { panel(LW / 2 - 190, LH - 76, 380, 40); text('Press Enter or tap to start your shift', LW / 2, LH - 55, `20px ${DISPLAY}`, '#f3efe2'); }
   } else if (G.state === 'play') drawHUD();
-  else if (G.state === 'brief') ticket(424, (cx, y, w) => {
+  else if (G.state === 'brief') ticket(364, (cx, y, w) => {
     const body = `600 ${w < 440 ? 12 : 14}px ${BODY}`, lines = [
-      ['Orders ping your app. Accept the ones you want with F', '#10201f'],
-      ['or by tapping the list. No clock. Four pipes lead out.', '#5b6f6a'],
-      ['Your roll is cargo, health and ammo. Reload at the pallet.', '#5b6f6a'],
-      ['Paper wrap: throw a sheet to cocoon a creature,', '#10201f'],
-      ['then whack the cocoon to bowl it into the others.', '#5b6f6a'],
-      [`Vents are shortcuts, but only fit ${VENT_MAX} sheets or fewer.`, '#10201f'],
-      ['Smokes: cigarette decoy, pipe push ring, cigar', '#10201f'],
-      ['smokescreen, joint haze. Swap with Q or tap its name.', '#5b6f6a'],
-      ['Back room: run steroids to a gym duct for big tips.', '#10201f'],
-      ['Mob gnomes lunge with knives and take the package.', '#5b6f6a'],
-      ['Humans above shoot, then grab. Keep moving, or hide', '#10201f'],
-      ['in a vent or smoke until they lose you.', '#5b6f6a'],
-      ['Drag the view to look around.', '#10201f']];
-    text(`SHIFT ${G.shift} · ${TOTAL_ORDERS} ORDERS`, cx, y + 32, `800 13px ${BODY}`, '#d8432f');
+      ['Orders ping your app. Accept with F or tap the list.', '#10201f'],
+      ['Tips go in your pocket. They only count once you walk', '#10201f'],
+      ['back into the lobby. Get knocked out and they are gone.', '#5b6f6a'],
+      ['Every drop adds heat: sharper creatures, then humans.', '#10201f'],
+      ['Heat clears when you come home. One more, or bank it?', '#5b6f6a'],
+      ['Your roll is cargo, health and ammo. Reload at the pallet.', '#10201f'],
+      [`Vents are shortcuts, but only fit ${VENT_MAX} sheets or fewer.`, '#5b6f6a'],
+      ['Spend banked tips at the stores in the lobby corner.', '#10201f'],
+      ['Reputation opens the gated pipes: mob, flood, high street.', '#5b6f6a'],
+      ['Whack X · wrap C · smoke V · drag to look around.', '#10201f']];
+    text('HOW THE JOB WORKS', cx, y + 32, `800 13px ${BODY}`, '#d8432f');
     text('The Lobby', cx, y + 64, `34px ${DISPLAY}`, '#10201f');
     lines.forEach(([s, col], n) => s && text(s, cx, y + 104 + n * 20, body, col));
   });
-  else if (G.state === 'end') ticket(230, (cx, y) => {
-    const m = Math.floor(G.clock / 60), s = Math.floor(G.clock % 60);
-    text('SHIFT COMPLETE', cx, y + 50, `40px ${DISPLAY}`, '#10201f');
-    text(`All ${TOTAL_ORDERS} emergencies handled in ${m}:${String(s).padStart(2, '0')}.`, cx, y + 98, `600 16px ${BODY}`, '#3d4f4b');
-    text(`Tips earned: ${G.tips}`, cx, y + 138, `26px ${DISPLAY}`, '#d8432f');
-    text('Next shift is a new part of the sewers.', cx, y + 172, `600 13px ${BODY}`, '#5b6f6a');
-  });
 }
 
-loadShift(1);
-resize();
 let last = performance.now();
 function frame(t) {
   const dt = Math.min(1 / 30, (t - last) / 1000);
@@ -1056,5 +1143,7 @@ function frame(t) {
   overlay();
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+// Signs are painted onto textures once, so wait (briefly) for the display font before building the world.
+const fontReady = document.fonts && document.fonts.load ? Promise.race([document.fonts.load('20px "Lilita One"'), new Promise(r => setTimeout(r, 1500))]) : Promise.resolve();
+fontReady.catch(() => {}).then(() => { loadWorld(); resize(); last = performance.now(); requestAnimationFrame(frame); });
 })();
