@@ -10,12 +10,12 @@
 /* Layout: one screen. Thin sign-board header, the pipe view fills everything else, thumb controls float over its bottom corners on touch. */
 :root {
   color-scheme: dark;
-  --sewer: #10201f;        /* page ground: wet pipe dark */
-  --sewer-raised: #1b3331; /* buttons, chips */
-  --pipe: #3f6b62;         /* borders, oxidised copper */
+  --sewer: #14181b;        /* page ground: wet pipe dark */
+  --sewer-raised: #20272c; /* buttons, chips */
+  --pipe: #3a454c;         /* borders, oxidised copper */
   --paper: #f3efe2;        /* toilet-paper white, main text */
   --hat: #d8432f;          /* gnome hat red, the one accent */
-  --muted: #8fa9a2;
+  --muted: #8a959c;
   --display: "Lilita One", "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
   --body: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -71,9 +71,10 @@ h1 span { color: var(--hat); }
   border: 2px solid var(--pipe);
   border-radius: 6px;
   overflow: hidden;
-  background: #0b1716;
+  background: #101417;
 }
 .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#view { filter: contrast(1.07) saturate(0.88); }
 #hud { pointer-events: none; }
 .pad { display: none; }
 .stick, .pad button {

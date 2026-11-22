@@ -1,4 +1,5 @@
 /* Gnome Delivery Service — 3D prototype (three.js r128).
+   Mood: desaturated grey-blue, haze, shafts of light from the street above, long shadows; the red hat is the one strong colour.
    A sewer labyrinth played as a top-down action game: fixed overhead camera, snappy movement, a dash, telegraphed enemies.
    Core loop (push your luck): accept orders in the lobby, head out through one of its four pipes, deliver.
    Tips go in your pocket and only count once you walk back into the lobby; a knockout loses the pocket.
@@ -51,17 +52,22 @@ const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('view
 const hudCanvas = document.getElementById('hud');
 const ctx = hudCanvas.getContext('2d');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a1615);
-scene.fog = new THREE.Fog(0x070f0f, 14, 36); // the edges of the view fall away into the dark
+scene.background = new THREE.Color(0x1a2126);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+scene.fog = new THREE.Fog(0x1a2126, 11, 31); // grey haze: distance dissolves rather than going black
 const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.1, 140);
-scene.add(new THREE.HemisphereLight(0xb8e8d8, 0x2c3a24, 0.4));
-const sun = new THREE.DirectionalLight(0xfff2d0, 0.22); sun.position.set(-4, 10, 6); scene.add(sun);
-const lantern = new THREE.PointLight(0xffd9a0, 1.7, 15); // the gnome carries the light
+scene.add(new THREE.HemisphereLight(0xaab8c4, 0x1c2226, 0.36));
+const sun = new THREE.DirectionalLight(0xd6e0ea, 0.62); // cold light slanting down from the street; follows the gnome and throws the long shadows
+sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.bias = -0.002; sun.shadow.normalBias = 0.04;
+Object.assign(sun.shadow.camera, { left: -19, right: 19, top: 19, bottom: -19, near: 1, far: 50 }); scene.add(sun, sun.target);
+const lit = o => { o.traverse(m => { if (m.isMesh && m.material.isMeshLambertMaterial && !m.material.transparent) { m.castShadow = true; m.receiveShadow = true; } }); return o; };
+const lantern = new THREE.PointLight(0xffe8cc, 0.85, 10); // a small warm pool around the gnome
 scene.add(lantern);
 
+const QUALITY = { dpr: 2, frames: 0, slow: 0, low: false }; // drops shadows and resolution if the device cannot keep up
 let LW = 960, LH = 540; // HUD logical size
 function resize() {
-  const w = stage.clientWidth, h = stage.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = stage.clientWidth, h = stage.clientHeight, dpr = Math.min(QUALITY.dpr, window.devicePixelRatio || 1);
   if (!w || !h) return;
   renderer.setPixelRatio(dpr); renderer.setSize(w, h, false);
   camera.aspect = w / h; camera.fov = w < h ? 62 : 46; camera.updateProjectionMatrix();
@@ -81,24 +87,24 @@ function canvasTexture(size, paint) {
   return t;
 }
 const brickTex = canvasTexture(256, (g, n) => {
-  g.fillStyle = '#3f4f48'; g.fillRect(0, 0, n, n);
+  g.fillStyle = '#30373c'; g.fillRect(0, 0, n, n);
   for (let r = 0; r < 8; r++) for (let c = 0; c < 4; c++) {
-    const v = 64 + ((r * 7 + c * 13) % 5) * 6;
-    g.fillStyle = `rgb(${v - 14},${v + 12},${v})`;
+    const v = 60 + ((r * 7 + c * 13) % 5) * 6;
+    g.fillStyle = `rgb(${v - 6},${v},${v + 7})`;
     g.fillRect(c * 64 + (r % 2 ? 32 : 0) - 64 + 3, r * 32 + 3, 58, 26); g.fillRect(c * 64 + (r % 2 ? 32 : 0) + 3, r * 32 + 3, 58, 26);
   }
-  g.fillStyle = 'rgba(120,160,80,0.35)';
+  g.fillStyle = 'rgba(16,22,26,0.45)'; // damp streaks
   for (let i = 0; i < 9; i++) g.fillRect((i * 53) % n, 0, 5 + (i % 3) * 3, 40 + (i * 37) % 120);
 });
 const floorTex = canvasTexture(256, (g, n) => {
-  g.fillStyle = '#44543f'; g.fillRect(0, 0, n, n);
-  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { g.fillStyle = (r + c) % 2 ? '#586660' : '#616f68'; g.fillRect(c * 64 + 2, r * 64 + 2, 60, 60); }
-  g.fillStyle = 'rgba(60,90,50,0.4)';
+  g.fillStyle = '#2a3136'; g.fillRect(0, 0, n, n);
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { g.fillStyle = (r + c) % 2 ? '#4a535a' : '#525c63'; g.fillRect(c * 64 + 2, r * 64 + 2, 60, 60); }
+  g.fillStyle = 'rgba(22,28,32,0.5)';
   for (let i = 0; i < 30; i++) g.fillRect((i * 71) % n, (i * 113) % n, 10, 6);
 });
 const sewageTex = canvasTexture(128, (g, n) => {
-  g.fillStyle = '#7f9a3a'; g.fillRect(0, 0, n, n);
-  g.strokeStyle = '#b6cf6c'; g.lineWidth = 3;
+  g.fillStyle = '#1d3b3d'; g.fillRect(0, 0, n, n);
+  g.strokeStyle = '#4f8f8c'; g.lineWidth = 3;
   for (let i = 0; i < 6; i++) { g.beginPath(); g.moveTo((i * 47) % n, (i * 29) % n); g.lineTo((i * 47) % n + 6, (i * 29) % n + 26); g.stroke(); }
 });
 const ventTex = canvasTexture(64, (g, n) => {
@@ -106,7 +112,7 @@ const ventTex = canvasTexture(64, (g, n) => {
   g.fillStyle = '#6d7a7a'; for (let i = 0; i < 4; i++) g.fillRect(4, i * 16 + 5, n - 8, 6);
 });
 const lobbyTex = canvasTexture(128, (g, n) => { // warm planks
-  for (let r = 0; r < 4; r++) { g.fillStyle = ['#a9793f', '#9c6d38', '#b28246', '#946634'][r]; g.fillRect(0, r * 32, n, 32); g.fillStyle = '#6e4a22'; g.fillRect(0, r * 32, n, 2); g.fillRect((r * 45) % n, r * 32, 2, 32); }
+  for (let r = 0; r < 4; r++) { g.fillStyle = ['#6b6258', '#63594f', '#72685d', '#5c5349'][r]; g.fillRect(0, r * 32, n, 32); g.fillStyle = '#3f3831'; g.fillRect(0, r * 32, n, 2); g.fillRect((r * 45) % n, r * 32, 2, 32); }
 });
 const NPC_LINES = ['Waiting on a ping. Always waiting.', '3B again? Somebody check on 3B.', 'Mind the mob den, south-east.', 'Slim roll, quick vents. Trust me.',
   'A human nearly got me Tuesday.', 'Back room pays. I never said that.', 'Tips are down this week.', 'My roll got soggy. Again.'];
@@ -114,23 +120,30 @@ const lam = (color, extra) => new THREE.MeshLambertMaterial(Object.assign({ colo
 const DS2 = { side: THREE.DoubleSide };
 const M = {
   // walls and rock tops are one-sided on purpose: the camera can sit inside the rock and see out through them
-  wall: lam(0xffffff, { map: brickTex }), curb: lam(0xffffff, { map: brickTex, ...DS2 }), top: lam(0x1d2c2a), floor: lam(0xffffff, { map: floorTex, ...DS2 }),
-  sewage: lam(0xffffff, { map: sewageTex, emissive: 0x2c3c12, ...DS2 }), vent: lam(0xffffff, { map: ventTex, ...DS2 }), steel: lam(0x9aa8a8),
-  copper: lam(0xb7743c), crate: lam(0x9a6b3c), porcelain: lam(0xf1eee4, DS2),
-  paper: lam(0xf7f4ea, DS2), rope: lam(0x7a5230), card: lam(0xa98258),
-  hat: lam(0xd8432f), tunic: lam(0x2f6fa8), skin: lam(0xeab98f), nose: lam(0xe09a7a), boot: lam(0x4a3222), gold: lam(0xe2b23c),
-  wood: lam(0xc99a5b), rubber: lam(0xb3261e), black: lam(0x151515),
-  rat: lam(0x8a8582), pink: lam(0xd78a9a), eye: new THREE.MeshBasicMaterial({ color: 0xff4030 }),
-  roach: lam(0x6b3d1e), roachHi: lam(0xa2673a), clog: lam(0x4d382d), white: lam(0xf3efe2),
-  glow: new THREE.MeshBasicMaterial({ color: 0xfff0b0, transparent: true, opacity: 0.22, depthWrite: false, ...DS2 }),
-  ring: new THREE.MeshBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.55, depthWrite: false, ...DS2 }),
-  rug: lam(0x6e3a30), phone: new THREE.MeshBasicMaterial({ color: 0x9fe8ff }), lobby: lam(0xffffff, { map: lobbyTex, ...DS2 }),
-  shadow: new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.38, depthWrite: false }),
+  wall: lam(0xffffff, { map: brickTex }), curb: lam(0xffffff, { map: brickTex, ...DS2 }), top: lam(0x0d1114), floor: lam(0xffffff, { map: floorTex, ...DS2 }),
+  sewage: lam(0xffffff, { map: sewageTex, emissive: 0x0c2a2c, ...DS2 }), vent: lam(0xffffff, { map: ventTex, ...DS2 }), steel: lam(0x7d8a90),
+  copper: lam(0x4a5258), crate: lam(0x5e564c), porcelain: lam(0xd9dcda, DS2),
+  paper: lam(0xe6e4dc, DS2), rope: lam(0x7a5230), card: lam(0xa98258),
+  hat: lam(0xe0321f), tunic: lam(0x3d5266), skin: lam(0xd9b08f), nose: lam(0xe09a7a), boot: lam(0x4a3222), gold: lam(0xb9a36a),
+  wood: lam(0x7a6f60), rubber: lam(0xb3261e), black: lam(0x151515),
+  rat: lam(0x6f6f72), pink: lam(0x9a7f84), eye: new THREE.MeshBasicMaterial({ color: 0xff4030 }),
+  roach: lam(0x3a2f2a), roachHi: lam(0xa2673a), clog: lam(0x4d382d), white: lam(0xf3efe2),
+  glow: new THREE.MeshBasicMaterial({ color: 0xdfe9ef, transparent: true, opacity: 0.22, depthWrite: false, ...DS2 }),
+  ring: new THREE.MeshBasicMaterial({ color: 0xeae6da, transparent: true, opacity: 0.55, depthWrite: false, ...DS2 }),
+  rug: lam(0x3f3a3a), phone: new THREE.MeshBasicMaterial({ color: 0x9fe8ff }), lobby: lam(0xffffff, { map: lobbyTex, ...DS2 }),
+  shadow: new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false }),
   warn: new THREE.MeshBasicMaterial({ color: 0xff3020, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }),
-  suit: lam(0x2a2a33), fedora: lam(0x141418), blade: lam(0xd0d6da), purple: lam(0x8a4fd0),
+  lamp: new THREE.MeshBasicMaterial({ color: 0xf2ead8 }),
+  shaft: new THREE.MeshBasicMaterial({ color: 0xbfd2de, transparent: true, opacity: 0.085, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+  pool: new THREE.MeshBasicMaterial({ color: 0xbfd2de, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false }),
+  puddle: new THREE.MeshBasicMaterial({ color: 0x0a0e11, transparent: true, opacity: 0.55, depthWrite: false }),
+  wade: new THREE.MeshLambertMaterial({ color: 0x3a6a6c, map: sewageTex, transparent: true, opacity: 0.6, depthWrite: false }),
+  flame: new THREE.MeshBasicMaterial({ color: 0xff8a30 }), bone: lam(0xcfcabb), junk: lam(0x3b4044), cone: lam(0xb5562c),
+  drip: new THREE.MeshBasicMaterial({ color: 0xa9c4d0 }),
+  suit: lam(0x2a2a33), fedora: lam(0x141418), blade: lam(0xd0d6da), purple: lam(0x6f5a8c),
   ventLamp: new THREE.MeshBasicMaterial({ color: 0xff4030 }), coin: new THREE.MeshBasicMaterial({ color: 0xffd24a }),
   smoke: new THREE.MeshLambertMaterial({ color: 0xd9dedc, transparent: true, opacity: 0.6, depthWrite: false }),
-  splash: new THREE.MeshBasicMaterial({ color: 0xa9c46a }), poof: new THREE.MeshBasicMaterial({ color: 0xb9b3a2 }), star: new THREE.MeshBasicMaterial({ color: 0xffe27a }),
+  splash: new THREE.MeshBasicMaterial({ color: 0x7fb4b0 }), poof: new THREE.MeshBasicMaterial({ color: 0xb9b3a2 }), star: new THREE.MeshBasicMaterial({ color: 0xffe27a }),
 };
 const mesh = (geo, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); return m; };
 const sphere = (r, mat, x, y, z) => mesh(new THREE.SphereGeometry(r, 12, 10), mat, x, y, z);
@@ -183,6 +196,16 @@ function generate(seed) {
   // chambers: the lobby in the middle (5 x 5), the fixer's back room up the north pipe, the mob's den out east
   const room = grid.map(r => r.map(() => false)), depot = { i: 11, j: 9 }, back = [11, 3], den = [17, 11];
   for (const [rx, ry, r] of [[depot.i, depot.j, 2], [...back, 1], [...den, 1]]) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { grid[ry + dy][rx + dx] = '.'; room[ry + dy][rx + dx] = true; }
+  // two halls per district: open chambers that break up the corridors and give each district a landmark
+  const halls = [], roomWithin = (x, y, n) => { for (let dy = -n; dy <= n; dy++) for (let dx = -n; dx <= n; dx++) if (room[y + dy] && room[y + dy][x + dx]) return true; return false; };
+  DISTRICTS.forEach((D, d) => { let made = 0; const pool = []; for (let cy = 1; cy < CH - 1; cy++) for (let cx = 1; cx < CW - 1; cx++) if (cellD(cx, cy) === d) pool.push([cx, cy]);
+    for (const [cx, cy] of shuffle(pool)) { if (made >= 2) break; const x = cx * 2 + 1, y = cy * 2 + 1;
+      if (DIRS.filter(([dx, dy]) => cellD(cx + dx, cy + dy) !== d).length > 1) continue;
+      const tiles = []; // a side that faces another district (or the lobby) stays solid rock, so districts never leak into each other
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (!((dx && cellD(cx + dx, cy) !== d) || (dy && cellD(cx, cy + dy) !== d))) tiles.push([x + dx, y + dy]);
+      if (tiles.some(([tx, ty]) => roomWithin(tx, ty, 1))) continue; // keep a wall between chambers
+      for (const [tx, ty] of tiles) { grid[ty][tx] = '.'; room[ty][tx] = true; }
+      halls.push({ i: x, j: y, d }); made++; } });
   for (const [dx, dy] of DIRS) grid[depot.j + dy * 3][depot.i + dx * 3] = '.'; // one pipe out of the lobby on every side
   const nearRoom = (x, y) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (room[y + dy] && room[y + dy][x + dx]) return true; return false; };
   const dist = bfs(grid, depot.i, depot.j);
@@ -190,7 +213,7 @@ function generate(seed) {
   const exits = (x, y) => DIRS.filter(([dx, dy]) => open(grid[y + dy][x + dx])).length;
   const deadEnds = cells.filter(([x, y]) => exits(x, y) === 1);
   // two delivery points and one gym duct per district: deep in, spread out, dead ends preferred
-  const used = new Set(), anchors = [[depot.i, depot.j], back, den];
+  const used = new Set(), anchors = [[depot.i, depot.j], back, den, ...halls.map(h => [h.i, h.j])];
   const choose = d => { let best = null, bs = -1;
     for (const [x, y, cd] of cells) { if (cd !== d || used.has(key(x, y)) || dist[y][x] < 5) continue;
       const sc = Math.min(...anchors.map(a => Math.hypot(x - a[0], y - a[1]))) + (exits(x, y) === 1 ? 1.5 : 0); if (sc > bs) { bs = sc; best = [x, y]; } }
@@ -210,14 +233,19 @@ function generate(seed) {
   for (const [x, y, dx, dy] of wet) { const d = tileD(x - dx, y - dy); if (d >= 0 && wetLeft[d] > 0) { wetLeft[d]--; grid[y][x] = '~'; } }
   // creatures by district, spare rolls, coins. Nothing spawns within six tiles' walk of the lobby.
   const things = [['M', den[0] + 1, den[1] - 1], ['M', den[0], den[1] + 1]], taken = new Set(used), far = (x, y, n) => things.every(t => Math.abs(t[1] - x) + Math.abs(t[2] - y) >= n);
+  for (const h of halls) { const m = DISTRICTS[h.d].mobs; const c2 = [[-1, -1], [1, 1], [1, -1], [-1, 1]].find(([a, b]) => grid[h.j + b][h.i + a] === '.'); things.push([m[0], h.i, h.j]); if (c2) things.push([m[m.length - 1], h.i + c2[0], h.j + c2[1]]); } // every hall is somebody's territory
   DISTRICTS.forEach((D, d) => { const kinds = D.mobs.slice();
     for (const [x, y, cd] of shuffle(cells.slice())) { if (!kinds.length) break; if (cd === d && dist[y][x] >= 6 && !taken.has(key(x, y)) && far(x, y, 3)) { things.push([kinds.pop(), x, y]); taken.add(key(x, y)); } } });
   let spare = 0; for (const [x, y] of shuffle(deadEnds.slice())) if (spare < 5 && !taken.has(key(x, y))) { things.push(['P', x, y]); taken.add(key(x, y)); spare++; }
   let coins = 0; for (const [x, y] of shuffle(cells.slice())) if (coins < 18 && !taken.has(key(x, y))) { things.push(['$', x, y]); taken.add(key(x, y)); coins++; }
+  // The Flood stands ankle-deep in places: wading is slow
+  const wade = grid.map(r => r.map(() => false));
+  for (const [x, y, d] of cells) if (d === 2 && R() < 0.55) { wade[y][x] = true; for (const [dx, dy] of DIRS) if (grid[y + dy][x + dx] === '.') wade[y + dy][x + dx] = true; }
+  for (const h of halls) if (h.d === 2) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) wade[h.j + dy][h.i + dx] = true;
   for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) grid[depot.j + dy][depot.i + dx] = 'L'; // lobby floor: creatures will not step on it
   DISTRICTS.forEach((D, d) => { if (d) grid[depot.j + D.dir[1] * 3][depot.i + D.dir[0] * 3] = String(d); }); // gates on the three pipes that reputation opens
   const dmap = grid.map((r, y) => r.map((c, x) => c === 'L' ? -1 : districtOf(Math.round((x - 1) / 2), Math.round((y - 1) / 2))));
-  return { grid, dmap, depot: { ...depot, x: depot.i * TS, z: depot.j * TS, px: depot.i * TS - 5.6, pz: depot.j * TS - 5.6 }, points, drops, fixer: { i: back[0], j: back[1], x: back[0] * TS, z: back[1] * TS, cool: 0 }, things };
+  return { grid, dmap, halls, wade, den: { x: den[0] * TS, z: den[1] * TS }, depot: { ...depot, x: depot.i * TS, z: depot.j * TS, px: depot.i * TS - 5.6, pz: depot.j * TS - 5.6 }, points, drops, fixer: { i: back[0], j: back[1], x: back[0] * TS, z: back[1] * TS, cool: 0 }, things };
 }
 
 /* ---------- world building ---------- */
@@ -232,6 +260,7 @@ function buildWorld() {
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     const c = grid[j][i], x = i * TS, z = j * TS, y = c === '#' ? WALL_H : c === '~' ? -0.4 : 0;
     quad(c === '#' ? 'top' : c === '~' ? 'sewage' : c === 'v' ? 'vent' : c === 'L' ? 'lobby' : 'floor', [x - hs, y, z + hs], [x + hs, y, z + hs], [x + hs, y, z - hs], [x - hs, y, z - hs], c === 'v' ? 2 : U, c === 'v' ? 2 : U);
+    if (c === '.' && G.wade[j][i]) quad('wade', [x - hs, 0.12, z + hs], [x + hs, 0.12, z + hs], [x + hs, 0.12, z - hs], [x - hs, 0.12, z - hs], U, U);
     if (c === '#' || c === '~') for (const [dx, dz] of DIRS) { // side faces towards anything lower
       const n = grid[j + dz] && grid[j + dz][i + dx]; if (!n || n === '#' || (c === '~' && n === '~')) continue;
       const cx = x + dx * hs, cz = z + dz * hs, ex = dz * hs, ez = -dx * hs, y0 = c === '#' ? (n === '~' ? -0.4 : 0) : -0.4, y1 = c === '#' ? WALL_H : 0;
@@ -249,7 +278,47 @@ function buildWorld() {
       }
     }
   }
-  const mats = { top: M.top, lobby: M.lobby, floor: M.floor, sewage: M.sewage, vent: M.vent, wall: M.wall, curb: M.curb };
+    /* ---- set dressing: what makes it a place rather than a maze ---- */
+  const hsh = (a, b) => { let n = (a * 374761393 + b * 668265263) ^ 0x5bd1e995; n = Math.imul(n ^ (n >>> 13), 1274126177); return ((n ^ (n >>> 16)) >>> 0) / 4294967296; };
+  const rock = (i, j) => !grid[j] || grid[j][i] === undefined || grid[j][i] === '#';
+  G.shafts = []; G.fires = [];
+  const shaft = (x, z, r, d) => { // light falling through a street grate: a slanted cone of haze and a pale pool on the floor
+    const cone = mesh(new THREE.CylinderGeometry(r * 0.3, r, 9, 20, 1, true), M.shaft.clone(), x + 1.16, 4.4, z + 0.8); cone.rotation.z = -0.26; cone.rotation.x = 0.18;
+    const pool = mesh(new THREE.CircleGeometry(r * 1.1, 24), M.pool.clone(), x, 0.05, z).rotateX(-Math.PI / 2); g.add(cone, pool); G.shafts.push({ cone, pool, d, seed: hsh(x | 0, z | 0) * 9 }); };
+  const fire = (x, z) => { // an oil-drum fire: the mob's one warm light
+    const flame = mesh(new THREE.ConeGeometry(0.28, 0.7, 7), M.flame, x, 1.2, z), light = new THREE.PointLight(0xff8a40, 1.3, 10); light.position.set(x, 1.6, z);
+    g.add(mesh(new THREE.CylinderGeometry(0.42, 0.38, 0.9, 12), M.junk, x, 0.45, z), flame, light); G.fires.push({ flame, light, seed: x + z }); };
+  const pile = (x, z, mat, n, sp) => { for (let k = 0; k < n; k++) { const a = k * 2.4, rr = (k % 3) * sp; g.add(box(0.22 + (k % 3) * 0.1, 0.14 + (k % 2) * 0.12, 0.2 + (k % 4) * 0.07, mat, x + Math.cos(a) * rr, 0.08 + (k % 2) * 0.06, z + Math.sin(a) * rr).rotateY(a)); } };
+  for (let j = 1; j < H - 1; j++) for (let i = 1; i < W - 1; i++) {
+    if (grid[j][i] !== '.') continue;
+    const x = i * TS, z = j * TS, r = hsh(i, j), d = G.dmap[j][i], alongX = rock(i, j - 1) && rock(i, j + 1), alongZ = rock(i - 1, j) && rock(i + 1, j);
+    // service pipes bracketed to the walls, in long runs; here and there a valve wheel
+    if (alongX && hsh(j, 7) < 0.65) { const sd = hsh(j, 3) < 0.5 ? -1 : 1; g.add(mesh(new THREE.CylinderGeometry(0.12, 0.12, TS, 8), M.copper, x, 0.95, z + sd * (hs - 0.15)).rotateZ(Math.PI / 2));
+      if (r < 0.18) g.add(mesh(new THREE.TorusGeometry(0.2, 0.05, 6, 12), M.steel, x, 0.95, z + sd * (hs - 0.33))); }
+    if (alongZ && hsh(i, 11) < 0.65) { const sd = hsh(i, 5) < 0.5 ? -1 : 1; g.add(mesh(new THREE.CylinderGeometry(0.12, 0.12, TS, 8), M.copper, x + sd * (hs - 0.15), 0.95, z).rotateX(Math.PI / 2));
+      if (r < 0.18) g.add(mesh(new THREE.TorusGeometry(0.2, 0.05, 6, 12), M.steel, x + sd * (hs - 0.33), 0.95, z).rotateY(Math.PI / 2)); }
+    // a fat pipe crossing overhead now and then: a dark shape between the camera and the floor
+    if ((alongX || alongZ) && r > 0.9) g.add(mesh(new THREE.CylinderGeometry(0.22, 0.22, TS + 0.5, 10), M.top, x, 2.1, z)[alongX ? 'rotateX' : 'rotateZ'](Math.PI / 2));
+    if (r > 0.55 && r < 0.66) g.add(mesh(new THREE.CircleGeometry(0.45 + r * 0.6, 14), M.puddle, x + (r - 0.6) * 9, 0.04, z + (hsh(j, i) - 0.5)).rotateX(-Math.PI / 2));
+    if (r > 0.28 && r < 0.36) pile(x + (hsh(i, 2) - 0.5) * 1.6, z + (hsh(j, 2) - 0.5) * 1.6, M.junk, 4, 0.22);
+    if (i % 2 && j % 2) { // one cell of the maze: maybe a shaft of light, maybe something that says which district this is
+      if (hsh(i + 50, j) < (d === 3 ? 0.42 : 0.13)) shaft(x, z, 1.3, d);
+      const r2 = hsh(i + 9, j + 4), cx = x + (hsh(i, 9) < 0.5 ? -1 : 1) * 1.05, cz = z + (hsh(j, 9) < 0.5 ? -1 : 1) * 1.05;
+      if (d === 0 && r2 < 0.3) { pile(cx, cz, M.junk, 7, 0.16); for (let k = 0; k < 3; k++) g.add(box(0.34, 0.04, 0.05, M.bone, cx + k * 0.12 - 0.1, 0.05, cz + 0.3 - k * 0.2).rotateY(k * 1.3)); } // rat nests and what is left of lunch
+      if (d === 1 && r2 < 0.26) { g.add(mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.75, 10), M.junk, cx, 0.375, cz), box(0.5, 0.5, 0.5, M.crate, cx - Math.sign(cx - x) * 0.55, 0.25, cz)); } // the mob's stock
+      if (d === 2 && r2 < 0.3) { g.add(mesh(new THREE.CylinderGeometry(0.05, 0.09, 1.5, 6), M.drip, cx, 0.75, cz), mesh(new THREE.RingGeometry(0.2, 0.34, 14), M.pool, cx, 0.14, cz).rotateX(-Math.PI / 2)); } // a pipe that never stops pouring
+      if (d === 3 && r2 < 0.28) { g.add(mesh(new THREE.ConeGeometry(0.2, 0.5, 8), M.cone, cx, 0.25, cz), box(0.42, 0.04, 0.42, M.cone, cx, 0.02, cz)); pile(cx + 0.5, cz + 0.2, M.junk, 3, 0.15); } // what falls through from the street
+    }
+  }
+  for (const h of G.halls) { const x = h.i * TS, z = h.j * TS; shaft(x, z, 2.3, h.d); // every hall gets a big shaft and its district's furniture, kept to the corners
+    for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { const cx = x + ox * 3.6, cz = z + oz * 3.6; if (grid[h.j + oz][h.i + ox] !== '.') continue;
+      if (h.d === 0) pile(cx, cz, M.junk, 9, 0.2);
+      else if (h.d === 1) { if (ox < 0 && oz < 0) fire(cx, cz); else g.add(box(0.8, 0.8, 0.8, M.crate, cx, 0.4, cz), box(0.6, 0.6, 0.6, M.crate, cx - ox * 0.1, 1.1, cz)); }
+      else if (h.d === 2) g.add(mesh(new THREE.CylinderGeometry(0.06, 0.1, 1.5, 6), M.drip, cx, 0.75, cz));
+      else g.add(mesh(new THREE.ConeGeometry(0.2, 0.5, 8), M.cone, cx, 0.25, cz)); } }
+  fire(G.den.x - 3.6, G.den.z - 3.6);
+  for (const p of G.points) shaft(p.x, p.z, 1.1, p.d); // light leaks down every bathroom pipe
+  const mats = { wade: M.wade, top: M.top, lobby: M.lobby, floor: M.floor, sewage: M.sewage, vent: M.vent, wall: M.wall, curb: M.curb };
   for (const k in bufs) { const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(bufs[k].p, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(bufs[k].uv, 2));
     geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, mats[k])); }
@@ -261,7 +330,7 @@ function buildWorld() {
     pallet.add(mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.6, 18), M.paper, px, py, pz), mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.62, 10), M.card, px, py, pz)); }
   g.add(pallet, mesh(new THREE.RingGeometry(2.0, 2.3, 32), M.ring, d.px, 0.03, d.pz).rotateX(-Math.PI / 2));
   g.add(mesh(new THREE.CircleGeometry(3.4, 32), M.rug, d.x, 0.02, d.z).rotateX(-Math.PI / 2));
-  const dl = new THREE.PointLight(0xffd9a0, 0.9, 24); dl.position.set(d.x, 3, d.z); g.add(dl);
+  const dl = new THREE.PointLight(0xffe2c0, 0.75, 22); dl.position.set(d.x, 3, d.z); g.add(dl);
   for (let k = 0; k < 12; k++) g.add(sphere(0.13, M.lamp, d.x + Math.cos(k * 0.5236) * 6.6, 2.9 + (k % 2) * 0.15, d.z + Math.sin(k * 0.5236) * 6.6));
   const board = mesh(new THREE.PlaneGeometry(2.6, 1.4), new THREE.MeshBasicMaterial({ map: canvasTexture(256, (c2, n) => { c2.fillStyle = '#6e4a22'; c2.fillRect(0, 0, n, n);
     c2.fillStyle = '#f3efe2'; c2.font = `44px ${DISPLAY}`; c2.textAlign = 'center'; c2.fillText('ORDERS', n / 2, 50);
@@ -269,7 +338,7 @@ function buildWorld() {
   g.add(board);
   for (const [dx, dz] of DIRS) { g.add(box(dx ? 0.35 : TS, 0.35, dx ? TS : 0.35, M.copper, d.x + dx * 8, 1.75, d.z + dz * 8), sphere(0.2, M.lamp, d.x + dx * 7.8, 1.5, d.z + dz * 7.8)); }
   G.npcs = [];
-  const hats = [0x4f9d5b, 0xe2b23c, 0x3f6fb8, 0xe07a2f, 0x2aa198, 0xb84f8a, 0x7a6ad8], tunics = [0x7a5230, 0x3d6b4f, 0x6b6f78, 0x2f6fa8];
+  const hats = [0x5d6b63, 0x8a8468, 0x55667a, 0x8a6a55, 0x5a7672, 0x7a6276, 0x6a6a86], tunics = [0x5a5148, 0x46574d, 0x5b5f66, 0x3d5266]; // everyone else is muted; only the player's hat is red
   //            x     z    facing  sits smoke phone
   const crowd = [[-4.6, -1.6, 0.9, 1, -1, 1], [-3.2, -0.6, -2.2, 0, 0, 0], [5.0, -5.4, -0.6, 0, 1, 0], [5.4, 3.6, -1.9, 1, -1, 1],
     [3.9, 5.0, -2.6, 0, -1, 1], [-1.6, 6.0, 2.6, 1, 2, 0], [3.6, -6.2, 3.14, 0, -1, 0]];
@@ -292,10 +361,10 @@ function buildWorld() {
   }
   // the stores, in the lobby's south-west corner: spend banked tips here
   const sx = d.x - 5.5, sz = d.z + 5.6; G.shop = { x: sx + 0.4, z: sz - 1.5 };
-  g.add(box(2.8, 0.9, 0.8, M.wood, sx, 0.45, sz - 0.6), box(2.9, 0.06, 0.9, M.hat, sx, 0.93, sz - 0.6));
+  g.add(box(2.8, 0.9, 0.8, M.wood, sx, 0.45, sz - 0.6), box(2.9, 0.06, 0.9, M.rug, sx, 0.93, sz - 0.6));
   for (const [ox, m] of [[-0.8, M.paper], [0, M.blade], [0.8, M.rope]]) g.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.3, 12), m, sx + ox, 1.05, sz - 0.6));
   const keeper = buildGnome({ npc: true, smoke: 2, hat: M.gold, tunic: M.suit }); keeper.position.set(sx, 0, sz + 0.5); keeper.rotation.y = Math.PI; g.add(keeper);
-  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(128, c2 => { c2.fillStyle = '#e2b23c'; c2.beginPath(); c2.roundRect(4, 40, 120, 48, 10); c2.fill();
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(128, c2 => { c2.fillStyle = '#b9a36a'; c2.beginPath(); c2.roundRect(4, 40, 120, 48, 10); c2.fill();
     c2.fillStyle = '#10201f'; c2.font = `30px ${DISPLAY}`; c2.textAlign = 'center'; c2.textBaseline = 'middle'; c2.fillText('STORES', 64, 66); }) }));
   sign.position.set(sx, 2.3, sz - 0.2); sign.scale.set(1.5, 1.5, 1); g.add(sign);
   // gates: bars across the three pipes that reputation opens
@@ -322,7 +391,7 @@ function buildWorld() {
   const f = G.fixer, fg = buildGnome({ bare: true, hat: M.purple, tunic: M.suit }); fg.position.set(f.x, 0, f.z - 1.2); g.add(fg);
   for (const [cx, cz, sy] of [[-3.4, -3.4, 1], [-2.2, -3.6, 0.7], [3.3, -3.3, 1.1], [3.5, 3.2, 0.8]]) g.add(box(1.1, sy, 1.1, M.crate, f.x + cx, sy / 2, f.z + cz));
   f.ring = mesh(new THREE.RingGeometry(1.3, 1.6, 28), purpleRing, f.x, 0.03, f.z).rotateX(-Math.PI / 2); g.add(f.ring);
-  return g;
+  return lit(g);
 }
 
 /* ---------- characters ---------- */
@@ -426,7 +495,7 @@ function spawnEnemies() { // (re)populate the sewers; called on load and every t
   for (const e of G.enemies) G.group.remove(e.mesh);
   G.enemies = [];
   for (const [kind, i, j] of G.spawns) {
-    const m = buildEnemy(kind); G.group.add(m);
+    const m = lit(buildEnemy(kind)); G.group.add(m);
     G.enemies.push({ kind, x: i * TS, z: j * TS, h: 0, vx: 0, vz: 0, vh: 0, hp: kind === 'C' ? 1 : kind === 'M' ? 3 : 2, wind: 0, dash: 0, cool: 0, lx: 0, lz: 1, fx: 0, fz: 1, onGround: true, stun: 0, flash: 0, wrap: 0, launch: 0,
       hitBy: 0, timer: (i % 5) * 0.3, home: [i, j], goal: null, from: null, stuck: 0, mesh: m });
   }
@@ -434,11 +503,11 @@ function spawnEnemies() { // (re)populate the sewers; called on load and every t
 const revealDistrict = d => G.dmap.forEach((r, j) => r.forEach((v, i) => { if (v === d) G.seen[j][i] = true; }));
 function loadWorld() {
   const world = generate(41);
-  Object.assign(G, { grid: world.grid, dmap: world.dmap, depot: world.depot, points: world.points, drops: world.drops, fixer: world.fixer, spawns: world.things.filter(t => 'RCBM'.includes(t[0])),
+  Object.assign(G, { grid: world.grid, dmap: world.dmap, halls: world.halls, wade: world.wade, den: world.den, depot: world.depot, points: world.points, drops: world.drops, fixer: world.fixer, spawns: world.things.filter(t => 'RCBM'.includes(t[0])),
     hunt: null, huntTimer: 60, enemies: [], pickups: [], shots: [], particles: [], seen: world.grid.map(r => r.map(() => false)), offers: [], decoy: null, rings: [], clouds: [],
     orderTimer: 0, lastPoint: -1, banner: null, shake: 0, pocket: 0, heat: 0, runRep: 0, out: false, shopOpen: false });
   G.group = buildWorld(); scene.add(G.group);
-  const pm = buildGnome(); G.group.add(pm);
+  const pm = lit(buildGnome()); G.group.add(pm);
   G.player = { isPlayer: true, x: G.depot.x, z: G.depot.z + 1.2, h: 0, vx: 0, vz: 0, vh: 0, ang: Math.PI, fx: 0, fz: -1, onGround: true, sheets: MAX_SHEETS,
     invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, smoke: 0, smokeCd: SMOKES.map(() => 0), swing: 0, dashT: 0, dashCd: 0, combo: 0, comboT: 0, big: false, walk: 0, pkg: null, knife: SAVE.knife, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
   for (const [kind, i, j] of world.things) if (kind === 'P' || kind === '$') { const m = buildPickup(kind); G.group.add(m); G.pickups.push({ kind, x: i * TS, z: j * TS, mesh: m }); }
@@ -621,6 +690,11 @@ function nearestEnemy(range, skipWrapped) {
   return best;
 }
 function faceTo(e) { const p = G.player; p.ang = Math.atan2(e.x - p.x, e.z - p.z); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
+const DUST = (() => { // motes hanging in the air around the gnome
+  const n = 150, pos = new Float32Array(n * 3); for (let k = 0; k < n; k++) { pos[k * 3] = (Math.random() - 0.5) * 26; pos[k * 3 + 1] = 0.3 + Math.random() * 3.6; pos[k * 3 + 2] = (Math.random() - 0.5) * 26; }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xc8d4dc, size: 0.07, transparent: true, opacity: 0.5, depthWrite: false })); pts.frustumCulled = false; scene.add(pts); return pts;
+})();
 const SLASH = new THREE.Group(); // the swing: a crescent in front of the gnome
 SLASH.add(mesh(new THREE.RingGeometry(1.1, 2.0, 18, 1, -Math.PI / 2 - 0.95, 1.9), new THREE.MeshBasicMaterial({ color: 0xfff6d8, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide })).rotateX(-Math.PI / 2));
 SLASH.visible = false; scene.add(SLASH);
@@ -729,7 +803,8 @@ function updatePlayer(dt) {
   else {
     const k = Math.min(1, dt * 24); // snappy: near-instant start, stop and turn
     if (p.attack > 0) { p.vx *= 0.8; p.vz *= 0.8; } // a swing commits: the step into it plays out, then control returns
-    else { p.vx += (wx * RUN - p.vx) * k; p.vz += (wz * RUN - p.vz) * k; }
+    else { const wr = G.wade[Math.round(p.z / TS)], wet = wr && wr[Math.round(p.x / TS)], run = RUN * (wet ? 0.7 : 1); // ankle-deep water drags
+      p.vx += (wx * run - p.vx) * k; p.vz += (wz * run - p.vz) * k; if (wet && wm > 0.2 && Math.random() < dt * 9) burst('splash', p.x, 0.2, p.z, 1, 1.6); }
     if (wm > 0.2 && p.attack <= 0) { p.ang = Math.atan2(wx, wz); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
     if (pressed.jump && p.dashCd <= 0) { // dash where the stick points, or the way the gnome faces
       if (wm > 0.2) { p.fx = wx / wm; p.fz = wz / wm; p.ang = Math.atan2(p.fx, p.fz); }
@@ -980,7 +1055,18 @@ function present(dt) {
   M.glow.opacity = 0.22 + 0.08 * Math.sin(t * 4);
   M.ventLamp.color.setHex(p.sheets <= VENT_MAX ? 0x58e070 : 0xff4030);
   M.sewage.map.offset.y = -t * 0.25;
-  lantern.position.set(p.x, 3.2, p.z);
+  lantern.position.set(p.x, 2.6, p.z);
+  sun.position.set(p.x - 7, 13, p.z - 9); sun.target.position.set(p.x, 0, p.z); sun.target.updateMatrixWorld();
+  for (const sh of G.shafts) { // under the High Street the light keeps being cut off as people walk over the grates
+    const f = sh.d === 3 && ((t * 0.8 + sh.seed) % 4.5) < 0.55 ? 0.25 : 1 + Math.sin(t * 0.9 + sh.seed) * 0.12; sh.cone.material.opacity = 0.085 * f; sh.pool.material.opacity = 0.13 * f; }
+  for (const fr of G.fires) { const f = 0.8 + Math.sin(t * 17 + fr.seed) * 0.12 + Math.sin(t * 7.3 + fr.seed) * 0.1; fr.light.intensity = 1.3 * f; fr.flame.scale.set(1, f * 1.2, 1); fr.flame.rotation.y = t * 3; }
+  { const a = DUST.geometry.attributes.position, v = a.array; // motes drift, and wrap so there are always some around the gnome
+    for (let k = 0; k < v.length; k += 3) { v[k] += Math.sin(t * 0.4 + k) * dt * 0.2; v[k + 1] += Math.cos(t * 0.3 + k) * dt * 0.08;
+      if (v[k] - p.x > 13) v[k] -= 26; else if (v[k] - p.x < -13) v[k] += 26; if (v[k + 2] - p.z > 13) v[k + 2] -= 26; else if (v[k + 2] - p.z < -13) v[k + 2] += 26; }
+    a.needsUpdate = true; }
+  if (G.state === 'play' && Math.random() < dt * 5) { // drips from the roof
+    const m = new THREE.Mesh(PGEO.dot, M.drip); m.position.set(p.x + (Math.random() - 0.5) * 20, 4.5, p.z + (Math.random() - 0.5) * 16); m.scale.set(0.5, 1.6, 0.5); scene.add(m);
+    G.particles.push({ type: 'drip', mesh: m, vx: 0, vy: -3, vz: 0, life: 0.62 }); }
   SLASH.visible = p.attack > 0 && G.state === 'play';
   if (SLASH.visible) { const f = 1 - p.attack / 0.16; SLASH.position.set(p.x, 0.75, p.z); SLASH.rotation.y = p.ang; SLASH.scale.setScalar((p.big ? 1.4 : 1) * (0.85 + f * 0.3)); SLASH.children[0].material.opacity = 0.85 * (1 - f); }
   // top-down action camera: one fixed angle that never turns, leading a little in the direction of travel
@@ -1013,7 +1099,7 @@ function drawMap(x0, y0, c) {
   panel(x0 - 6, y0 - 6, W * c + 12, H * c + 12);
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     const ch = G.grid[j][i]; if (!G.seen[j][i] || ch === '#') continue;
-    ctx.fillStyle = ch === '~' ? '#8aa63c' : ch === 'v' ? '#d5dcdc' : ch === 'L' ? '#a9793f' : '123'.includes(ch) && SAVE.rep < DISTRICTS[+ch].rep ? '#d8432f' : (DISTRICTS[G.dmap[j][i]] || DISTRICTS[0]).tint; ctx.fillRect(x0 + i * c, y0 + j * c, c, c);
+    ctx.fillStyle = ch === '~' ? '#3f8f8c' : ch === 'v' ? '#d5dcdc' : ch === 'L' ? '#8a7f6e' : '123'.includes(ch) && SAVE.rep < DISTRICTS[+ch].rep ? '#d8432f' : (DISTRICTS[G.dmap[j][i]] || DISTRICTS[0]).tint; ctx.fillRect(x0 + i * c, y0 + j * c, c, c);
   }
   ctx.fillStyle = '#ffe27a'; ctx.fillRect(x0 + (G.depot.i - 2) * c, y0 + (G.depot.j - 2) * c, c, c); // roll pallet
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1136,7 +1222,7 @@ function overlay() {
     if (Math.floor(now() * 2) % 2) { panel(LW / 2 - 190, LH - 76, 380, 40); text('Press Enter or tap to start your shift', LW / 2, LH - 55, `20px ${DISPLAY}`, '#f3efe2'); }
   } else if (G.state === 'play') {
     const vg = ctx.createRadialGradient(LW / 2, LH / 2, Math.min(LW, LH) * 0.42, LW / 2, LH / 2, Math.max(LW, LH) * 0.72); // darkness at the edges of the lantern light
-    vg.addColorStop(0, 'rgba(4,10,10,0)'); vg.addColorStop(1, 'rgba(4,10,10,0.7)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, LW, LH);
+    vg.addColorStop(0, 'rgba(8,11,13,0)'); vg.addColorStop(1, 'rgba(8,11,13,0.78)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, LW, LH);
     drawHUD();
   }
   else if (G.state === 'brief') ticket(384, (cx, y, w) => {
@@ -1161,6 +1247,10 @@ function overlay() {
 let last = performance.now();
 function frame(t) {
   const dt = Math.min(1 / 30, (t - last) / 1000);
+  if (!QUALITY.low && G.state === 'play') { // five seconds of mostly slow frames: trade the shadows and sharpness for speed
+    QUALITY.frames++; if (t - last > 45) QUALITY.slow++;
+    if (QUALITY.frames >= 120) { if (QUALITY.slow > 80) { QUALITY.low = true; QUALITY.dpr = 1; sun.castShadow = false; M.shadow.opacity = 0.38; resize(); } QUALITY.frames = QUALITY.slow = 0; }
+  }
   last = t;
   update(dt);
   present(dt);

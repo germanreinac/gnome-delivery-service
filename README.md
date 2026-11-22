@@ -45,6 +45,18 @@ Push your luck: go out, earn, and decide after every drop whether to risk one mo
 Districts only join through the lobby, apart from vents, which cut between them for a roll of 6 sheets or fewer.
 Progress (bank, reputation, purchases) is kept in the browser's local storage where that is available.
 
+## Mood and places
+
+The look aims for cold, quiet dread: desaturated grey-blue, haze instead of black, shafts of light falling through street
+grates, long shadows, dust in the air, drips. The player's red hat is the one strong colour.
+
+- Every district has open halls as landmarks, each lit by a big shaft and dressed for its owner.
+- Rat Runs: nests and bones. Mob Turf: crates, barrels and oil-drum fires, the only warm light out there.
+  The Flood: pouring pipes and ankle-deep water that slows you. High Street: far more grates overhead, whose light keeps
+  being cut off as people walk across them, and junk fallen from the street.
+- Service pipes run along the corridor walls, with the odd fat pipe crossing overhead.
+- If the device cannot keep up, the game drops the real-time shadows and resolution after a few seconds.
+
 ## Tools and threats
 
 - The roll is cargo, health and ammo: orders use 3 to 6 sheets, a bite or a dunk in sewage tears off 1 to 3,
