@@ -1,5 +1,5 @@
 /* Gnome Delivery Service — 3D prototype (three.js r128).
-   An open sewer labyrinth, seen from just behind the gnome. The camera swings round to follow where they run.
+   A sewer labyrinth played as a top-down action game: fixed overhead camera, snappy movement, a dash, telegraphed enemies.
    Core loop (push your luck): accept orders in the lobby, head out through one of its four pipes, deliver.
    Tips go in your pocket and only count once you walk back into the lobby; a knockout loses the pocket.
    Every drop raises heat (sharper creatures, more humans), which clears when you come home.
@@ -17,9 +17,9 @@
 (() => {
 'use strict';
 
-const TS = 3.2, WALL_H = 3.2;            // tile size, wall height
+const TS = 3.2, WALL_H = 1.5;            // tile size, wall height
 const CW = 10, CH = 8, W = CW * 2 + 1, H = CH * 2 + 1; // maze cells and tile grid
-const GRAV = 22, RUN = 6.5, JUMP = 8, RADIUS = 0.42;
+const GRAV = 22, RUN = 7.5, RADIUS = 0.42;
 let MAX_SHEETS = 12; // grows with the bigger-roll upgrade
 const VENT_MAX = 6, MAX_ACTIVE = 3;
 const DISPLAY = '"Lilita One", "Arial Rounded MT Bold", sans-serif';
@@ -52,11 +52,11 @@ const hudCanvas = document.getElementById('hud');
 const ctx = hudCanvas.getContext('2d');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a1615);
-scene.fog = new THREE.Fog(0x0a1615, 8, 40);
+scene.fog = new THREE.Fog(0x070f0f, 14, 36); // the edges of the view fall away into the dark
 const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.1, 140);
-scene.add(new THREE.HemisphereLight(0xb8e8d8, 0x2c3a24, 0.7));
-const sun = new THREE.DirectionalLight(0xfff2d0, 0.35); sun.position.set(-4, 10, 6); scene.add(sun);
-const lantern = new THREE.PointLight(0xffe2b0, 1.1, 22);
+scene.add(new THREE.HemisphereLight(0xb8e8d8, 0x2c3a24, 0.4));
+const sun = new THREE.DirectionalLight(0xfff2d0, 0.22); sun.position.set(-4, 10, 6); scene.add(sun);
+const lantern = new THREE.PointLight(0xffd9a0, 1.7, 15); // the gnome carries the light
 scene.add(lantern);
 
 let LW = 960, LH = 540; // HUD logical size
@@ -64,7 +64,7 @@ function resize() {
   const w = stage.clientWidth, h = stage.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
   if (!w || !h) return;
   renderer.setPixelRatio(dpr); renderer.setSize(w, h, false);
-  camera.aspect = w / h; camera.fov = w < h ? 82 : 62; camera.updateProjectionMatrix();
+  camera.aspect = w / h; camera.fov = w < h ? 62 : 46; camera.updateProjectionMatrix();
   const k = Math.max(0.75, Math.min(w / 960, h / 540));
   LW = w / k; LH = h / k;
   hudCanvas.width = w * dpr; hudCanvas.height = h * dpr;
@@ -81,9 +81,9 @@ function canvasTexture(size, paint) {
   return t;
 }
 const brickTex = canvasTexture(256, (g, n) => {
-  g.fillStyle = '#5a6e64'; g.fillRect(0, 0, n, n);
+  g.fillStyle = '#3f4f48'; g.fillRect(0, 0, n, n);
   for (let r = 0; r < 8; r++) for (let c = 0; c < 4; c++) {
-    const v = 86 + ((r * 7 + c * 13) % 5) * 7;
+    const v = 64 + ((r * 7 + c * 13) % 5) * 6;
     g.fillStyle = `rgb(${v - 14},${v + 12},${v})`;
     g.fillRect(c * 64 + (r % 2 ? 32 : 0) - 64 + 3, r * 32 + 3, 58, 26); g.fillRect(c * 64 + (r % 2 ? 32 : 0) + 3, r * 32 + 3, 58, 26);
   }
@@ -91,8 +91,8 @@ const brickTex = canvasTexture(256, (g, n) => {
   for (let i = 0; i < 9; i++) g.fillRect((i * 53) % n, 0, 5 + (i % 3) * 3, 40 + (i * 37) % 120);
 });
 const floorTex = canvasTexture(256, (g, n) => {
-  g.fillStyle = '#7f9c5e'; g.fillRect(0, 0, n, n);
-  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { g.fillStyle = (r + c) % 2 ? '#66756c' : '#6f7f75'; g.fillRect(c * 64 + 2, r * 64 + 2, 60, 60); }
+  g.fillStyle = '#44543f'; g.fillRect(0, 0, n, n);
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { g.fillStyle = (r + c) % 2 ? '#586660' : '#616f68'; g.fillRect(c * 64 + 2, r * 64 + 2, 60, 60); }
   g.fillStyle = 'rgba(60,90,50,0.4)';
   for (let i = 0; i < 30; i++) g.fillRect((i * 71) % n, (i * 113) % n, 10, 6);
 });
@@ -124,7 +124,9 @@ const M = {
   roach: lam(0x6b3d1e), roachHi: lam(0xa2673a), clog: lam(0x4d382d), white: lam(0xf3efe2),
   glow: new THREE.MeshBasicMaterial({ color: 0xfff0b0, transparent: true, opacity: 0.22, depthWrite: false, ...DS2 }),
   ring: new THREE.MeshBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.55, depthWrite: false, ...DS2 }),
-  rug: lam(0x8c3b2e), phone: new THREE.MeshBasicMaterial({ color: 0x9fe8ff }), lobby: lam(0xffffff, { map: lobbyTex, ...DS2 }),
+  rug: lam(0x6e3a30), phone: new THREE.MeshBasicMaterial({ color: 0x9fe8ff }), lobby: lam(0xffffff, { map: lobbyTex, ...DS2 }),
+  shadow: new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.38, depthWrite: false }),
+  warn: new THREE.MeshBasicMaterial({ color: 0xff3020, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }),
   suit: lam(0x2a2a33), fedora: lam(0x141418), blade: lam(0xd0d6da), purple: lam(0x8a4fd0),
   ventLamp: new THREE.MeshBasicMaterial({ color: 0xff4030 }), coin: new THREE.MeshBasicMaterial({ color: 0xffd24a }),
   smoke: new THREE.MeshLambertMaterial({ color: 0xd9dedc, transparent: true, opacity: 0.6, depthWrite: false }),
@@ -132,6 +134,7 @@ const M = {
 };
 const mesh = (geo, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); return m; };
 const sphere = (r, mat, x, y, z) => mesh(new THREE.SphereGeometry(r, 12, 10), mat, x, y, z);
+const blob = r => mesh(new THREE.CircleGeometry(r, 18), M.shadow, 0, 0.03, 0).rotateX(-Math.PI / 2); // a soft shadow to plant things on the floor
 const box = (w, h, d, m, x, y, z) => mesh(new THREE.BoxGeometry(w, h, d), m, x, y, z);
 
 /* ---------- state ---------- */
@@ -241,8 +244,8 @@ function buildWorld() {
       const alongX = open(grid[j][i - 1]);
       for (const sgn of [-1, 1]) {
         const f = new THREE.Group(); f.position.set(x + (alongX ? sgn * hs : 0), 0, z + (alongX ? 0 : sgn * hs)); if (alongX) f.rotation.y = Math.PI / 2;
-        f.add(box(TS, 0.4, 0.3, M.steel, 0, 1.85, 0), box(0.3, 2.05, 0.3, M.steel, -hs + 0.15, 1.02, 0), box(0.3, 2.05, 0.3, M.steel, hs - 0.15, 1.02, 0));
-        f.add(sphere(0.16, M.ventLamp, 0, 2.2, 0)); g.add(f);
+        f.add(box(TS, 0.3, 0.3, M.steel, 0, 1.45, 0), box(0.3, 1.6, 0.3, M.steel, -hs + 0.15, 0.8, 0), box(0.3, 1.6, 0.3, M.steel, hs - 0.15, 0.8, 0));
+        f.add(sphere(0.2, M.ventLamp, 0, 1.75, 0)); g.add(f);
       }
     }
   }
@@ -260,11 +263,11 @@ function buildWorld() {
   g.add(mesh(new THREE.CircleGeometry(3.4, 32), M.rug, d.x, 0.02, d.z).rotateX(-Math.PI / 2));
   const dl = new THREE.PointLight(0xffd9a0, 0.9, 24); dl.position.set(d.x, 3, d.z); g.add(dl);
   for (let k = 0; k < 12; k++) g.add(sphere(0.13, M.lamp, d.x + Math.cos(k * 0.5236) * 6.6, 2.9 + (k % 2) * 0.15, d.z + Math.sin(k * 0.5236) * 6.6));
-  const board = mesh(new THREE.PlaneGeometry(3.6, 2), new THREE.MeshBasicMaterial({ map: canvasTexture(256, (c2, n) => { c2.fillStyle = '#6e4a22'; c2.fillRect(0, 0, n, n);
+  const board = mesh(new THREE.PlaneGeometry(2.6, 1.4), new THREE.MeshBasicMaterial({ map: canvasTexture(256, (c2, n) => { c2.fillStyle = '#6e4a22'; c2.fillRect(0, 0, n, n);
     c2.fillStyle = '#f3efe2'; c2.font = `44px ${DISPLAY}`; c2.textAlign = 'center'; c2.fillText('ORDERS', n / 2, 50);
-    for (let k = 0; k < 6; k++) { c2.fillStyle = k % 3 ? '#f3efe2' : '#ffe27a'; c2.fillRect(22 + (k % 3) * 76, 76 + Math.floor(k / 3) * 84, 60, 70); c2.fillStyle = '#d8432f'; c2.fillRect(46 + (k % 3) * 76, 72 + Math.floor(k / 3) * 84, 10, 10); } }) }), d.x + 4.4, 1.7, d.z - 7.93);
+    for (let k = 0; k < 6; k++) { c2.fillStyle = k % 3 ? '#f3efe2' : '#ffe27a'; c2.fillRect(22 + (k % 3) * 76, 76 + Math.floor(k / 3) * 84, 60, 70); c2.fillStyle = '#d8432f'; c2.fillRect(46 + (k % 3) * 76, 72 + Math.floor(k / 3) * 84, 10, 10); } }) }), d.x + 4.4, 0.78, d.z - 7.93);
   g.add(board);
-  for (const [dx, dz] of DIRS) { g.add(box(dx ? 0.35 : TS, 0.35, dx ? TS : 0.35, M.copper, d.x + dx * 8, 2.7, d.z + dz * 8), sphere(0.2, M.lamp, d.x + dx * 7.8, 2.4, d.z + dz * 7.8)); }
+  for (const [dx, dz] of DIRS) { g.add(box(dx ? 0.35 : TS, 0.35, dx ? TS : 0.35, M.copper, d.x + dx * 8, 1.75, d.z + dz * 8), sphere(0.2, M.lamp, d.x + dx * 7.8, 1.5, d.z + dz * 7.8)); }
   G.npcs = [];
   const hats = [0x4f9d5b, 0xe2b23c, 0x3f6fb8, 0xe07a2f, 0x2aa198, 0xb84f8a, 0x7a6ad8], tunics = [0x7a5230, 0x3d6b4f, 0x6b6f78, 0x2f6fa8];
   //            x     z    facing  sits smoke phone
@@ -279,22 +282,22 @@ function buildWorld() {
   // delivery points: a porcelain pipe up to someone's bathroom
   for (const p of G.points) {
     const pg = new THREE.Group(); pg.position.set(p.x, 0, p.z);
-    pg.add(mesh(new THREE.CylinderGeometry(0.75, 0.75, 14, 18, 1, true), M.porcelain, 0, 9.6, 0), mesh(new THREE.TorusGeometry(0.8, 0.14, 8, 22), M.porcelain, 0, 2.6, 0).rotateX(Math.PI / 2));
+    pg.add(mesh(new THREE.CylinderGeometry(0.75, 0.75, 2.4, 18, 1, true), M.porcelain, 0, 3.8, 0), mesh(new THREE.TorusGeometry(0.8, 0.14, 8, 22), M.porcelain, 0, 2.6, 0).rotateX(Math.PI / 2));
     p.beam = mesh(new THREE.CylinderGeometry(0.7, 1.5, 2.6, 18, 1, true), M.glow, 0, 1.3, 0);
     p.ring = mesh(new THREE.RingGeometry(1.2, 1.45, 28), M.ring, 0, 0.03, 0).rotateX(-Math.PI / 2);
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(64, (c2, n) => { c2.fillStyle = '#d8432f'; c2.beginPath(); c2.arc(32, 32, 30, 0, 7); c2.fill();
       c2.fillStyle = '#f3efe2'; c2.font = `44px ${DISPLAY}`; c2.textAlign = 'center'; c2.textBaseline = 'middle'; c2.fillText(p.letter, 32, 35); }), depthTest: false }));
-    tag.position.y = 3.4; tag.scale.setScalar(1.3); p.tag = tag;
+    tag.position.y = 2.6; tag.scale.setScalar(1.3); p.tag = tag;
     pg.add(p.beam, p.ring, tag); g.add(pg);
   }
   // the stores, in the lobby's south-west corner: spend banked tips here
   const sx = d.x - 5.5, sz = d.z + 5.6; G.shop = { x: sx + 0.4, z: sz - 1.5 };
-  g.add(box(2.8, 0.9, 0.8, M.wood, sx, 0.45, sz - 0.6), box(3.2, 0.12, 2.0, M.hat, sx, 2.35, sz - 0.2), box(0.12, 2.3, 0.12, M.wood, sx - 1.5, 1.15, sz - 1.1), box(0.12, 2.3, 0.12, M.wood, sx + 1.5, 1.15, sz - 1.1));
+  g.add(box(2.8, 0.9, 0.8, M.wood, sx, 0.45, sz - 0.6), box(2.9, 0.06, 0.9, M.hat, sx, 0.93, sz - 0.6));
   for (const [ox, m] of [[-0.8, M.paper], [0, M.blade], [0.8, M.rope]]) g.add(mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.3, 12), m, sx + ox, 1.05, sz - 0.6));
   const keeper = buildGnome({ npc: true, smoke: 2, hat: M.gold, tunic: M.suit }); keeper.position.set(sx, 0, sz + 0.5); keeper.rotation.y = Math.PI; g.add(keeper);
   const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(128, c2 => { c2.fillStyle = '#e2b23c'; c2.beginPath(); c2.roundRect(4, 40, 120, 48, 10); c2.fill();
     c2.fillStyle = '#10201f'; c2.font = `30px ${DISPLAY}`; c2.textAlign = 'center'; c2.textBaseline = 'middle'; c2.fillText('STORES', 64, 66); }) }));
-  sign.position.set(sx, 3.0, sz - 0.2); sign.scale.set(1.5, 1.5, 1); g.add(sign);
+  sign.position.set(sx, 2.3, sz - 0.2); sign.scale.set(1.5, 1.5, 1); g.add(sign);
   // gates: bars across the three pipes that reputation opens
   G.gates = DISTRICTS.map((D, n) => { if (!n) return null;
     const gate = new THREE.Group(); gate.position.set(d.x + D.dir[0] * 3 * TS, 0, d.z + D.dir[1] * 3 * TS); if (D.dir[0]) gate.rotation.y = Math.PI / 2;
@@ -307,12 +310,12 @@ function buildWorld() {
   const purpleRing = new THREE.MeshBasicMaterial({ color: 0xb98cff, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide });
   for (const dr of G.drops) {
     const dg = new THREE.Group(); dg.position.set(dr.x, 0, dr.z);
-    dg.add(box(1.3, 12, 1.3, M.steel, 0, 8.7, 0), box(1.6, 0.14, 1.6, M.steel, 0, 2.7, 0));
+    dg.add(box(1.3, 2.4, 1.3, M.steel, 0, 3.9, 0), box(1.6, 0.14, 1.6, M.steel, 0, 2.7, 0));
     dr.beam = mesh(new THREE.CylinderGeometry(0.6, 1.4, 2.6, 4, 1, true), M.glow, 0, 1.3, 0);
     dr.ring = mesh(new THREE.RingGeometry(1.2, 1.45, 28), purpleRing, 0, 0.03, 0).rotateX(-Math.PI / 2);
     dr.tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTexture(64, c2 => { c2.fillStyle = '#8a4fd0'; c2.beginPath(); c2.arc(32, 32, 30, 0, 7); c2.fill();
       c2.fillStyle = '#f3efe2'; c2.font = `44px ${DISPLAY}`; c2.textAlign = 'center'; c2.textBaseline = 'middle'; c2.fillText('$', 32, 35); }), depthTest: false }));
-    dr.tag.position.y = 3.4; dr.tag.scale.setScalar(1.3);
+    dr.tag.position.y = 2.6; dr.tag.scale.setScalar(1.3);
     dg.add(dr.beam, dr.ring, dr.tag); g.add(dg);
   }
   // the back room: a fixer gnome among crates
@@ -362,7 +365,7 @@ function buildGnome(o = {}) { // o.bare: no roll, smoke or plunger; o.knife: bla
     if (o.phone) torso.add(box(0.13, 0.22, 0.02, M.phone, -0.22, 0.66, 0.36).rotateX(-0.5)); }
   if (o.bare) { roll.visible = false; mouth.forEach(m => { m.visible = false; }); plunger.forEach(m => { m.visible = false; }); knife.visible = !!o.knife; }
   torso.add(arm);
-  g.add(bootL, bootR, torso);
+  g.add(bootL, bootR, torso, blob(0.5));
   g.userData = { bootL, bootR, torso, roll, tail, arm, mouth, plunger, knife, pkg };
   return g;
 }
@@ -403,6 +406,7 @@ function buildEnemy(kind) {
     g.userData.blob = body;
   }
   // paper cocoon, shown while wrapped
+  const warn = mesh(new THREE.RingGeometry(0.75, 1.0, 22), M.warn, 0, 0.05, 0).rotateX(-Math.PI / 2); warn.visible = false; g.add(warn, blob(kind === 'C' ? 0.35 : 0.5)); g.userData.warn = warn; // red ring: about to lunge
   const cocoon = sphere(1, M.paper, 0, 0.4, 0); cocoon.scale.set(0.55, 0.5, 0.75); cocoon.visible = false; g.add(cocoon);
   g.userData.body = body; g.userData.cocoon = cocoon;
   return g;
@@ -436,12 +440,12 @@ function loadWorld() {
   G.group = buildWorld(); scene.add(G.group);
   const pm = buildGnome(); G.group.add(pm);
   G.player = { isPlayer: true, x: G.depot.x, z: G.depot.z + 1.2, h: 0, vx: 0, vz: 0, vh: 0, ang: Math.PI, fx: 0, fz: -1, onGround: true, sheets: MAX_SHEETS,
-    invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, smoke: 0, smokeCd: SMOKES.map(() => 0), swing: 0, coyote: 0, jbuf: 0, walk: 0, pkg: null, knife: SAVE.knife, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
+    invuln: 0, knock: 0, attack: 0, cooldown: 0, throwCd: 0, smoke: 0, smokeCd: SMOKES.map(() => 0), swing: 0, dashT: 0, dashCd: 0, combo: 0, comboT: 0, big: false, walk: 0, pkg: null, knife: SAVE.knife, safe: { x: G.depot.x, z: G.depot.z }, mesh: pm };
   for (const [kind, i, j] of world.things) if (kind === 'P' || kind === '$') { const m = buildPickup(kind); G.group.add(m); G.pickups.push({ kind, x: i * TS, z: j * TS, mesh: m }); }
   spawnEnemies();
   SAVE.maps.forEach((own, d) => { if (own) revealDistrict(d); });
   spawnOrder(); spawnOrder();
-  camReady = false; camYaw = Math.PI;
+  camReady = false;
 }
 /* Orders arrive as offers on the app. Nothing is on the clock until the gnome accepts one. */
 function spawnOrder() { // only from districts whose pipe is open
@@ -496,23 +500,13 @@ stage.addEventListener('pointerdown', e => {
     if (G.state === 'play' && G.shopOpen && sr && x > sr.x && x < sr.x + sr.w && y > sr.y && y < sr.y + sr.n * 24) pressed['n' + Math.floor((y - sr.y) / 24)] = true; // tapping a row in the stores buys it
     else if (G.state === 'play' && x > 12 && x < 234 && y > 60 && y < 98) pressed.swap = true;
     else if (G.state === 'play' && x > 12 && x < 234 && y >= 98 && y < 100 + (G.panelH || 0)) pressed.accept = true; // tapping the order list accepts the next offer
-    else { pressed.confirm = true; if (G.state === 'play') { camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY }; stage.setPointerCapture(e.pointerId); } }
+    else pressed.confirm = true;
   }
   audioInit();
 });
-// drag anywhere on the view (right thumb, or the mouse) to swing and tilt the camera
-let camDrag = null;
-stage.addEventListener('pointermove', e => {
-  if (!camDrag || e.pointerId !== camDrag.id) return;
-  if (!camDrag.live) { if (Math.hypot(e.clientX - camDrag.x, e.clientY - camDrag.y) < 10) return; camDrag.live = true; camDrag.x = e.clientX; camDrag.y = e.clientY; return; } // a tap is not a drag
-  camYaw -= (e.clientX - camDrag.x) * 0.007; camPitch = Math.max(0.14, Math.min(1.1, camPitch + (e.clientY - camDrag.y) * 0.005)); camHold = 1.5;
-  camDrag.x = e.clientX; camDrag.y = e.clientY;
-});
-for (const ev of ['pointerup', 'pointercancel']) stage.addEventListener(ev, e => { if (camDrag && e.pointerId === camDrag.id) camDrag = null; });
 for (const b of document.querySelectorAll('[data-key]')) {
   const k = b.dataset.key;
-  b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('on'); press(k); if (G.state !== 'play') pressed.confirm = true;
-    camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY }; }); // sliding off a button swings the camera, so the thumb can stay put
+  b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('on'); press(k); if (G.state !== 'play') pressed.confirm = true; });
   for (const ev of ['pointerup', 'pointercancel']) b.addEventListener(ev, () => { b.classList.remove('on'); release(k); });
   b.addEventListener('contextmenu', e => e.preventDefault());
 }
@@ -562,7 +556,7 @@ function step(e, dt) {
   let c = hit(e.x + e.vx * dt, e.z, e); if (c) { e.bump = c; e.vx = 0; } else e.x += e.vx * dt;
   c = hit(e.x, e.z + e.vz * dt, e); if (c) { e.bump = c; e.vz = 0; } else e.z += e.vz * dt;
   e.vh -= GRAV * dt; e.h += e.vh * dt;
-  const g = tileAt(e.x, e.z) === '~' ? -Infinity : 0;
+  const g = tileAt(e.x, e.z) === '~' && !(e.dashT > 0) ? -Infinity : 0; // a dash skims over sewage
   e.onGround = false;
   if (e.h <= g) { e.h = g; e.vh = 0; e.onGround = true; }
 }
@@ -627,6 +621,9 @@ function nearestEnemy(range, skipWrapped) {
   return best;
 }
 function faceTo(e) { const p = G.player; p.ang = Math.atan2(e.x - p.x, e.z - p.z); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
+const SLASH = new THREE.Group(); // the swing: a crescent in front of the gnome
+SLASH.add(mesh(new THREE.RingGeometry(1.1, 2.0, 18, 1, -Math.PI / 2 - 0.95, 1.9), new THREE.MeshBasicMaterial({ color: 0xfff6d8, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide })).rotateX(-Math.PI / 2));
+SLASH.visible = false; scene.add(SLASH);
 const TARGET = mesh(new THREE.RingGeometry(0.62, 0.8, 24), new THREE.MeshBasicMaterial({ color: 0xff5040, side: THREE.DoubleSide, transparent: true, opacity: 0.85, depthWrite: false })).rotateX(-Math.PI / 2);
 TARGET.visible = false; scene.add(TARGET);
 const inCloud = (x, z) => G.clouds.some(c => Math.hypot(c.x - x, c.z - z) < c.r);
@@ -723,21 +720,24 @@ function updatePlayer(dt) {
   const p = G.player;
   let ax = (held.right ? 1 : 0) - (held.left ? 1 : 0) + stickAxis.x, ay = (held.up ? 1 : 0) - (held.down ? 1 : 0) + stickAxis.y;
   const mag = Math.hypot(ax, ay); if (mag > 1) { ax /= mag; ay /= mag; }
-  if (p.knock > 0) p.knock -= dt;
+  const wx = ax, wz = -ay, wm = Math.hypot(wx, wz); // the camera never turns, so the stick maps straight onto the floor
+  p.dashCd -= dt;
+  if (p.dashT > 0) { // mid-dash: committed, untouchable, skimming over sewage
+    if (Math.random() < dt * 70) burst('smoke', p.x, 0.5, p.z, 1, 0.6);
+    if ((p.dashT -= dt) <= 0) { p.vx *= 0.25; p.vz *= 0.25; }
+  } else if (p.knock > 0) p.knock -= dt;
   else {
-    const k = Math.min(1, dt * 12);
-    // the stick is relative to the camera: up is away from it
-    const wx = Math.sin(camYaw) * ay - Math.cos(camYaw) * ax, wz = Math.cos(camYaw) * ay + Math.sin(camYaw) * ax;
-    p.vx += (wx * RUN - p.vx) * k; p.vz += (wz * RUN - p.vz) * k;
-    if (mag > 0.2 && p.attack <= 0) { let d = Math.atan2(wx, wz) - p.ang; d = Math.atan2(Math.sin(d), Math.cos(d)); p.ang += d * Math.min(1, dt * 16); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
+    const k = Math.min(1, dt * 24); // snappy: near-instant start, stop and turn
+    if (p.attack > 0) { p.vx *= 0.8; p.vz *= 0.8; } // a swing commits: the step into it plays out, then control returns
+    else { p.vx += (wx * RUN - p.vx) * k; p.vz += (wz * RUN - p.vz) * k; }
+    if (wm > 0.2 && p.attack <= 0) { p.ang = Math.atan2(wx, wz); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
+    if (pressed.jump && p.dashCd <= 0) { // dash where the stick points, or the way the gnome faces
+      if (wm > 0.2) { p.fx = wx / wm; p.fz = wz / wm; p.ang = Math.atan2(p.fx, p.fz); }
+      p.dashT = 0.17; p.dashCd = 0.65; p.vx = p.fx * 27; p.vz = p.fz * 27; p.attack = 0; p.invuln = Math.max(p.invuln, 0.24);
+      blip(520, 0.13, 'sawtooth', -320, 0.04); burst('smoke', p.x, 0.4, p.z, 6, 1.6);
+    }
   }
-  p.coyote = p.onGround ? 0.1 : p.coyote - dt;
-  p.jbuf = pressed.jump ? 0.12 : p.jbuf - dt;
-  if (p.jbuf > 0 && p.coyote > 0) { p.vh = JUMP; p.jbuf = 0; p.coyote = 0; p.onGround = false; blip(330, 0.12, 'square', 220, 0.03); }
-  if (!held.jump && p.vh > 0) p.vh -= GRAV * dt * 1.2; // release early for a short hop
   step(p, dt);
-  // the camera swings in behind the gnome; running straight at it leaves it alone, so there is no spinning
-  if ((camHold -= dt) <= 0) camYaw += 2.6 * Math.sin(p.ang - camYaw) * Math.min(1, Math.hypot(p.vx, p.vz) / RUN) * dt;
   if (p.bump && '123'.includes(p.bump) && !(G.banner && G.banner.vent)) { const D = DISTRICTS[+p.bump]; G.banner = { text: `${D.name} opens at reputation ${D.rep}. You have ${SAVE.rep}.`, t: 2, vent: true }; }
   if (p.bump === 'v' && !(G.banner && G.banner.vent)) G.banner = { text: `Roll too big for the vent: ${VENT_MAX} sheets or fewer`, t: 1.6, vent: true };
   p.walk = p.onGround && Math.hypot(p.vx, p.vz) > 0.8 ? p.walk + dt * 13 : 0;
@@ -749,8 +749,12 @@ function updatePlayer(dt) {
   for (let j = tj - 3; j <= tj + 3; j++) for (let i = ti - 3; i <= ti + 3; i++) if (G.seen[j] && i >= 0 && i < W && Math.hypot(i - ti, j - tj) < 3.4) G.seen[j][i] = true;
 
   p.cooldown -= dt; p.attack -= dt; p.invuln -= dt; p.throwCd -= dt;
-  if ((pressed.attack || held.attack) && p.cooldown <= 0) { const tg = nearestEnemy(3.4); if (tg) faceTo(tg); // hold to keep swinging
-    p.attack = 0.22; p.cooldown = p.knife ? 0.26 : 0.36; p.swing++; blip(180, 0.08, 'sawtooth', 200, 0.04); }
+  if ((p.comboT -= dt) <= 0) p.combo = 0;
+  if ((pressed.attack || held.attack) && p.cooldown <= 0 && !(p.dashT > 0)) { const tg = nearestEnemy(3.6); if (tg) faceTo(tg); // hold to keep swinging
+    p.combo = p.combo % 3 + 1; p.comboT = 0.75; p.big = p.combo === 3; // every third swing in a row is a heavy one
+    p.attack = 0.16; p.cooldown = (p.knife ? 0.22 : 0.3) + (p.big ? 0.14 : 0); p.swing++;
+    const reach = tg ? Math.hypot(tg.x - p.x, tg.z - p.z) : 0, sp = tg ? Math.max(0, Math.min(18, (reach - 1.3) / 0.1)) : 6; p.vx = p.fx * sp; p.vz = p.fz * sp; // step in, far enough to connect
+    blip(p.big ? 140 : 190, 0.09, 'sawtooth', 220, 0.045); }
   if (pressed.wrap && p.throwCd <= 0) {
     if (p.sheets < 1) say('No paper left to throw');
     else { // costs a sheet; leans towards the nearest creature in front
@@ -834,7 +838,7 @@ function updateEnemies(dt) {
       if (e.launch <= 0 || e.bump || e.h < -0.7) defeat(e, 1);
       continue;
     }
-    const whacked = p.attack > 0 && e.hitBy !== p.swing && d < 2.3 && Math.abs(e.h - p.h) < 1.6 && (d < 0.9 || (-dx * p.fx - dz * p.fz) / d > 0.15);
+    const whacked = p.attack > 0 && e.hitBy !== p.swing && d < 2.6 && Math.abs(e.h - p.h) < 1.6 && (d < 0.9 || (-dx * p.fx - dz * p.fz) / d > 0.15);
     if (e.wrap > 0) {
       e.wrap -= dt; e.vx = e.vz = 0;
       if (whacked) { e.hitBy = p.swing; e.wrap = 0; e.launch = 0.8; e.vx = p.fx * 15; e.vz = p.fz * 15; e.vh = 3; e.h = 0.2; e.onGround = false; blip(260, 0.15, 'square', 300, 0.06); continue; }
@@ -869,9 +873,9 @@ function updateEnemies(dt) {
           const gx = e.goal[0] * TS - e.x, gz = e.goal[1] * TS - e.z, gd = Math.hypot(gx, gz) || 1; wx = gx / gd * speed[0]; wz = gz / gd * speed[0];
         }
         e.vx = wx; e.vz = wz;
-        if (e.kind === 'M') { // knife lunge: stop, wind up, dash. The wind-up is the moment to sidestep or whack.
+        if (e.kind === 'M' || e.kind === 'R') { // lunge: stop, wind up (red ring), then dash. The wind-up is the moment to dash clear or hit first.
           e.cool -= dt;
-          if (e.dash > 0) { e.dash -= dt; e.vx = e.lx * 10; e.vz = e.lz * 10; wx = e.lx; wz = e.lz; }
+          if (e.dash > 0) { e.dash -= dt; e.vx = e.lx * (e.kind === 'M' ? 10 : 8.5); e.vz = e.lz * (e.kind === 'M' ? 10 : 8.5); wx = e.lx; wz = e.lz; }
           else if (e.wind > 0) { e.vx = e.vz = 0; wx = e.lx; wz = e.lz; if ((e.wind -= dt) <= 0) { e.dash = 0.22; blip(520, 0.08, 'sawtooth', 300, 0.04); } }
           else if (sees && td < 2.6 && e.cool <= 0) { e.wind = 0.65; e.cool = 2.8; e.lx = tx / td; e.lz = tz / td; e.vx = e.vz = 0; }
         }
@@ -881,14 +885,16 @@ function updateEnemies(dt) {
     step(e, dt);
     if (e.h < -0.7) { e.dead = true; burst('splash', e.x, -0.3, e.z, 8, 4); G.pocket += 1; continue; }
     if (whacked) {
-      e.hitBy = p.swing; e.hp -= p.knife ? 2 : 1; e.wind = e.dash = 0; e.flash = 0.18; e.stun = 0.4; e.vx = -dx / d * 7 + p.fx * 3; e.vz = -dz / d * 7 + p.fz * 3; e.vh = 5; e.onGround = false;
-      blip(120, 0.1, 'square', -40, 0.06);
+      const kb = p.big ? 13 : 4.5; // light hits keep it in reach, the heavy one sends it flying // impact: a beat of freeze, a shake, sparks, and the creature thrown back
+      e.hitBy = p.swing; e.hp -= (p.knife ? 2 : 1) + (p.big ? 1 : 0); e.wind = e.dash = 0; e.flash = 0.18; e.stun = p.big ? 0.6 : 0.4; e.vx = -dx / d * kb + p.fx * 3; e.vz = -dz / d * kb + p.fz * 3; e.vh = p.big ? 6.5 : 4.5; e.onGround = false;
+      G.hitstop = p.big ? 0.09 : 0.05; G.shake = Math.max(G.shake, p.big ? 0.28 : 0.13); burst('star', e.x, 0.7, e.z, p.big ? 9 : 4, 3.5);
+      blip(p.big ? 90 : 120, p.big ? 0.16 : 0.1, 'square', -40, 0.07);
       if (e.hp <= 0) defeat(e, 1);
-    } else if (p.invuln <= 0 && e.stun <= 0 && !(e.mellow > 0) && d < 0.85 && Math.abs(e.h - p.h) < 1.1) {
+    } else if (p.invuln <= 0 && e.stun <= 0 && !(e.mellow > 0) && d < 0.9 && Math.abs(e.h - p.h) < 1.1 && (e.kind === 'C' || e.kind === 'B' || e.dash > 0)) { // rats and the mob only hurt on a lunge
       p.invuln = 1.2; p.knock = 0.25; p.vx = dx / d * 7; p.vz = dz / d * 7; p.vh = 5.5;
       blip(200, 0.2, 'sawtooth', -120, 0.06);
       if (e.kind === 'M' && p.pkg) { p.pkg = null; say('The mob took the package!', 2.4); }
-      loseSheets(e.kind === 'M' ? 3 : 2);
+      loseSheets(e.kind === 'M' ? 3 : e.kind === 'C' ? 1 : 2);
     }
   }
   for (const s of G.shots) { // paper streamers
@@ -911,6 +917,7 @@ function update(dt) {
   } else if (G.state === 'brief') {
     if (go && G.t > 0.3) { G.state = 'play'; pressed.jump = false; const p = G.player; p.ang = Math.PI; p.fx = 0; p.fz = -1; }
   } else if (G.state === 'play') {
+    if (G.hitstop > 0) { G.hitstop -= dt; dt = 0.0001; } // freeze-frame on impact
     G.clock += dt; G.orderTimer += dt;
     if (G.orderTimer > 14) spawnOrder();
     updatePlayer(dt);
@@ -924,7 +931,7 @@ function update(dt) {
 
 /* ---------- presenting the 3D scene ---------- */
 const now = () => performance.now() / 1000;
-let camReady = false, camYaw = Math.PI, camDist = 4.6, camPitch = 27 * Math.PI / 180, camHold = 0; // camHold: seconds the auto-follow waits after a manual look
+let camReady = false; const camLead = { x: 0, z: 0 };
  const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
 function present(dt) {
   const p = G.player, t = now(), ud = p.mesh.userData;
@@ -946,7 +953,8 @@ function present(dt) {
     e.mesh.rotation.z = e.mellow > 0 ? Math.sin(t * 3 + e.x) * 0.3 : 0;
     const wrapped = e.wrap > 0 || e.launch > 0;
     d.cocoon.visible = wrapped; d.body.visible = !wrapped || (e.wrap < 1.2 && e.wrap > 0 && Math.floor(t * 10) % 2 === 0);
-    e.mesh.scale.setScalar(e.flash > 0 ? 1.3 : 1);
+    e.mesh.scale.setScalar(e.flash > 0 ? 1.3 : e.wind > 0 ? 1 + Math.sin(t * 30) * 0.06 : 1);
+    d.warn.visible = e.wind > 0; if (e.wind > 0) d.warn.scale.setScalar(1.6 - e.wind);
     if (d.tail) d.tail.rotation.z = Math.sin(t * 7 + e.x) * 0.4;
     if (d.mob) { const w = Math.hypot(e.vx, e.vz) > 0.5 ? Math.sin(e.timer * 11) : 0; d.mob.bootL.position.z = 0.05 + w * 0.2; d.mob.bootR.position.z = 0.05 - w * 0.2;
       d.mob.arm.rotation.x = e.wind > 0 ? -2.3 : e.dash > 0 ? 1.5 : 0.35; }
@@ -954,7 +962,7 @@ function present(dt) {
     if (d.blob) { const q = e.onGround ? 1 + Math.sin(t * 5 + e.x) * 0.07 : 1.2; d.blob.scale.set(1 / q, q, 1 / q); }
   }
   for (const k of G.pickups) { k.mesh.position.set(k.x, 0.75 + Math.sin(t * 3 + k.x) * 0.12, k.z); k.mesh.rotation.y = t * 2; }
-  for (const pt of G.points) { const on = !!pt.order; pt.beam.visible = pt.ring.visible = on; pt.tag.visible = on; pt.tag.position.y = 3.4 + (on ? Math.sin(t * 3) * 0.15 : 0); }
+  for (const pt of G.points) { const on = !!pt.order; pt.beam.visible = pt.ring.visible = on; pt.tag.visible = on; pt.tag.position.y = 2.6 + (on ? Math.sin(t * 3) * 0.15 : 0); }
   for (const c of G.npcs) { c.mesh.position.y = c.y + Math.sin(t * 2 + c.n) * 0.02; c.mesh.userData.torso.rotation.z = Math.sin(t * 0.7 + c.n * 2) * 0.05;
     if (c.smokes && Math.random() < dt * 0.5) burst('smoke', c.x + Math.sin(c.mesh.rotation.y) * 0.5, c.y + 0.95, c.z + Math.cos(c.mesh.rotation.y) * 0.5, 1, 0.5); }
   G.drops.forEach((dr, n) => { dr.beam.visible = dr.ring.visible = dr.tag.visible = !!p.pkg && p.pkg.drop === n; });
@@ -965,28 +973,24 @@ function present(dt) {
   if (hu) {
     HUNT.ring.position.set(hu.x, 0.06, hu.z); HUNT.ring.scale.setScalar((hu.phase === 'grab' ? 1.5 : 1) * (1 + Math.sin(t * 12) * 0.06));
     HUNT.ring.material.color.setHex(hu.phase === 'lock' ? 0xff3020 : hu.phase === 'grab' ? 0xff8a30 : 0xffd24a);
-    HUNT.beam.position.set(hu.x, 9, hu.z); HUNT.hand.position.set(hu.x, hu.phase === 'slam' ? 0.5 : 0.5 + 13 * Math.max(0, hu.timer) / 1.1, hu.z); HUNT.hand.rotation.y = camYaw;
+    HUNT.beam.position.set(hu.x, 9, hu.z); HUNT.hand.position.set(hu.x, hu.phase === 'slam' ? 0.5 : 0.5 + 13 * Math.max(0, hu.timer) / 1.1, hu.z);
   }
   const tg = G.state === 'play' ? nearestEnemy(9) : null; TARGET.visible = !!tg;
   if (tg) { TARGET.position.set(tg.x, 0.06, tg.z); TARGET.scale.setScalar(1 + Math.sin(t * 8) * 0.08); }
   M.glow.opacity = 0.22 + 0.08 * Math.sin(t * 4);
   M.ventLamp.color.setHex(p.sheets <= VENT_MAX ? 0x58e070 : 0xff4030);
   M.sewage.map.offset.y = -t * 0.25;
-  lantern.position.set(p.x, 2.4, p.z);
-  // chase camera: low behind the gnome, pulled in when a wall is at their back
+  lantern.position.set(p.x, 3.2, p.z);
+  SLASH.visible = p.attack > 0 && G.state === 'play';
+  if (SLASH.visible) { const f = 1 - p.attack / 0.16; SLASH.position.set(p.x, 0.75, p.z); SLASH.rotation.y = p.ang; SLASH.scale.setScalar((p.big ? 1.4 : 1) * (0.85 + f * 0.3)); SLASH.children[0].material.opacity = 0.85 * (1 - f); }
+  // top-down action camera: one fixed angle that never turns, leading a little in the direction of travel
   if (G.state === 'title') { tmpA.set(p.x + 1.6, 1.8, p.z + 3.0); tmpB.set(p.x, 0.95, p.z); p.ang = 0.5; }
   else {
-    // The camera orbits the gnome at camPitch. Below the wall tops it may back into the rock (walls are see-through
-    // from behind) but never out the far side into another pipe; above them it pulls in when a wall would block the view.
-    const fx = Math.sin(camYaw), fz = Math.cos(camYaw), D = 4.6 * Math.cos(camPitch), hc = 1.0 + 4.6 * Math.sin(camPitch), through = hc < WALL_H - 0.05;
-    let room = D, inRock = false;
-    for (let d = 0.4; d < D; d += 0.2) { const rock = tileAt(p.x - fx * d, p.z - fz * d) === '#';
-      if (through) { if (inRock && !rock) { room = d - 0.4; break; } inRock = inRock || rock; }
-      else if (rock && (hc < WALL_H + 0.3 || 1.2 + (hc - 1.2) * d / D < WALL_H + 0.15)) { room = Math.max(0.6, d - 0.35); break; } }
-    camDist = room < camDist ? room : camDist + (room - camDist) * Math.min(1, dt * 5);
-    tmpA.set(p.x - fx * camDist, hc, p.z - fz * camDist); tmpB.set(p.x + fx * 2.0, 1.0, p.z + fz * 2.0);
+    const cf = camera.aspect < 1 ? 1.15 : 1, lk = Math.min(1, dt * 3), cl = v => Math.max(-1.8, Math.min(1.8, v * 0.22));
+    camLead.x += (cl(p.vx) - camLead.x) * lk; camLead.z += (cl(p.vz) - camLead.z) * lk;
+    tmpA.set(p.x + camLead.x, 11 * cf, p.z + 6.4 * cf + camLead.z); tmpB.set(p.x + camLead.x, 0.5, p.z - 0.4 + camLead.z);
   }
-  const k = camReady ? Math.min(1, dt * 14) : 1; camReady = true;
+  const k = camReady ? Math.min(1, dt * 8) : 1; camReady = true;
   camPos.lerp(tmpA, k); camLook.lerp(tmpB, k);
   camera.position.copy(camPos);
   if (G.shake > 0) { camera.position.x += (Math.random() - 0.5) * G.shake; camera.position.y += (Math.random() - 0.5) * G.shake; }
@@ -1130,7 +1134,11 @@ function overlay() {
     text('DELIVERY SERVICE', LW / 2, 118 * big + 8, `${44 * big}px ${DISPLAY}`, '#d8432f');
     text('Emergency toilet paper, straight up the pipe.', LW / 2, 160 * big + 8, `800 ${Math.max(13, 17 * big)}px ${BODY}`, '#c9d8d3');
     if (Math.floor(now() * 2) % 2) { panel(LW / 2 - 190, LH - 76, 380, 40); text('Press Enter or tap to start your shift', LW / 2, LH - 55, `20px ${DISPLAY}`, '#f3efe2'); }
-  } else if (G.state === 'play') drawHUD();
+  } else if (G.state === 'play') {
+    const vg = ctx.createRadialGradient(LW / 2, LH / 2, Math.min(LW, LH) * 0.42, LW / 2, LH / 2, Math.max(LW, LH) * 0.72); // darkness at the edges of the lantern light
+    vg.addColorStop(0, 'rgba(4,10,10,0)'); vg.addColorStop(1, 'rgba(4,10,10,0.7)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, LW, LH);
+    drawHUD();
+  }
   else if (G.state === 'brief') ticket(384, (cx, y, w) => {
     const body = `600 ${w < 440 ? 12 : 14}px ${BODY}`, lines = [
       ['Orders ping your app. Accept with F or tap the list.', '#10201f'],
@@ -1142,8 +1150,8 @@ function overlay() {
       [`Vents are shortcuts, but only fit ${VENT_MAX} sheets or fewer.`, '#5b6f6a'],
       ['Spend banked tips at the stores in the lobby corner.', '#10201f'],
       ['Reputation opens the gated pipes: mob, flood, high street.', '#5b6f6a'],
-      ['Attacks aim at the ringed creature. Hold Whack to keep', '#10201f'],
-      ['swinging. Drag the view, or slide off a button, to look.', '#5b6f6a']];
+      ['Attacks aim at the ringed creature; every third swing', '#10201f'],
+      ['hits hard. Dash crosses sewage and dodges a red-ring lunge.', '#5b6f6a']];
     text('HOW THE JOB WORKS', cx, y + 32, `800 13px ${BODY}`, '#d8432f');
     text('The Lobby', cx, y + 64, `34px ${DISPLAY}`, '#10201f');
     lines.forEach(([s, col], n) => s && text(s, cx, y + 104 + n * 20, body, col));
