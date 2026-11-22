@@ -504,13 +504,15 @@ stage.addEventListener('pointerdown', e => {
 let camDrag = null;
 stage.addEventListener('pointermove', e => {
   if (!camDrag || e.pointerId !== camDrag.id) return;
-  camYaw -= (e.clientX - camDrag.x) * 0.007; camPitch = Math.max(0.14, Math.min(1.1, camPitch + (e.clientY - camDrag.y) * 0.005)); camHold = 2.5;
+  if (!camDrag.live) { if (Math.hypot(e.clientX - camDrag.x, e.clientY - camDrag.y) < 10) return; camDrag.live = true; camDrag.x = e.clientX; camDrag.y = e.clientY; return; } // a tap is not a drag
+  camYaw -= (e.clientX - camDrag.x) * 0.007; camPitch = Math.max(0.14, Math.min(1.1, camPitch + (e.clientY - camDrag.y) * 0.005)); camHold = 1.5;
   camDrag.x = e.clientX; camDrag.y = e.clientY;
 });
 for (const ev of ['pointerup', 'pointercancel']) stage.addEventListener(ev, e => { if (camDrag && e.pointerId === camDrag.id) camDrag = null; });
 for (const b of document.querySelectorAll('[data-key]')) {
   const k = b.dataset.key;
-  b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('on'); press(k); if (G.state !== 'play') pressed.confirm = true; });
+  b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('on'); press(k); if (G.state !== 'play') pressed.confirm = true;
+    camDrag = { id: e.pointerId, x: e.clientX, y: e.clientY }; }); // sliding off a button swings the camera, so the thumb can stay put
   for (const ev of ['pointerup', 'pointercancel']) b.addEventListener(ev, () => { b.classList.remove('on'); release(k); });
   b.addEventListener('contextmenu', e => e.preventDefault());
 }
@@ -618,6 +620,15 @@ function updateDecoy(dt) {
   if ((d.life -= dt) <= 0) popDecoy();
 }
 
+/* Attacks aim themselves: the nearest creature in view gets a ring, and whack, wrap and the pipe ring turn to face it. */
+function nearestEnemy(range, skipWrapped) {
+  const p = G.player; let best = null, bd = range;
+  for (const e of G.enemies) { if (e.dead || e.launch || (skipWrapped && e.wrap > 0)) continue; const d = Math.hypot(e.x - p.x, e.z - p.z); if (d < bd && sight(p.x, p.z, e.x, e.z)) { bd = d; best = e; } }
+  return best;
+}
+function faceTo(e) { const p = G.player; p.ang = Math.atan2(e.x - p.x, e.z - p.z); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
+const TARGET = mesh(new THREE.RingGeometry(0.62, 0.8, 24), new THREE.MeshBasicMaterial({ color: 0xff5040, side: THREE.DoubleSide, transparent: true, opacity: 0.85, depthWrite: false })).rotateX(-Math.PI / 2);
+TARGET.visible = false; scene.add(TARGET);
 const inCloud = (x, z) => G.clouds.some(c => Math.hypot(c.x - x, c.z - z) < c.r);
 function useSmoke() {
   const p = G.player, k = SMOKES[p.smoke];
@@ -625,6 +636,7 @@ function useSmoke() {
   p.smokeCd[p.smoke] = k.cd;
   if (k.id === 'cig') spawnDecoy();
   else if (k.id === 'pipe') { // a smoke ring that rolls forward and shoves whatever it meets
+    const tg = nearestEnemy(9); if (tg) faceTo(tg);
     const m = mesh(new THREE.TorusGeometry(0.8, 0.16, 8, 20), M.smoke); m.rotation.y = p.ang; scene.add(m);
     G.rings.push({ x: p.x + p.fx * 0.7, z: p.z + p.fz * 0.7, vx: p.fx * 9, vz: p.fz * 9, life: 1.1, mesh: m });
     blip(300, 0.3, 'sine', -120, 0.05);
@@ -717,7 +729,7 @@ function updatePlayer(dt) {
     // the stick is relative to the camera: up is away from it
     const wx = Math.sin(camYaw) * ay - Math.cos(camYaw) * ax, wz = Math.cos(camYaw) * ay + Math.sin(camYaw) * ax;
     p.vx += (wx * RUN - p.vx) * k; p.vz += (wz * RUN - p.vz) * k;
-    if (mag > 0.2) { let d = Math.atan2(wx, wz) - p.ang; d = Math.atan2(Math.sin(d), Math.cos(d)); p.ang += d * Math.min(1, dt * 16); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
+    if (mag > 0.2 && p.attack <= 0) { let d = Math.atan2(wx, wz) - p.ang; d = Math.atan2(Math.sin(d), Math.cos(d)); p.ang += d * Math.min(1, dt * 16); p.fx = Math.sin(p.ang); p.fz = Math.cos(p.ang); }
   }
   p.coyote = p.onGround ? 0.1 : p.coyote - dt;
   p.jbuf = pressed.jump ? 0.12 : p.jbuf - dt;
@@ -725,7 +737,7 @@ function updatePlayer(dt) {
   if (!held.jump && p.vh > 0) p.vh -= GRAV * dt * 1.2; // release early for a short hop
   step(p, dt);
   // the camera swings in behind the gnome; running straight at it leaves it alone, so there is no spinning
-  if ((camHold -= dt) <= 0) camYaw += 2.0 * Math.sin(p.ang - camYaw) * Math.min(1, Math.hypot(p.vx, p.vz) / RUN) * dt;
+  if ((camHold -= dt) <= 0) camYaw += 2.6 * Math.sin(p.ang - camYaw) * Math.min(1, Math.hypot(p.vx, p.vz) / RUN) * dt;
   if (p.bump && '123'.includes(p.bump) && !(G.banner && G.banner.vent)) { const D = DISTRICTS[+p.bump]; G.banner = { text: `${D.name} opens at reputation ${D.rep}. You have ${SAVE.rep}.`, t: 2, vent: true }; }
   if (p.bump === 'v' && !(G.banner && G.banner.vent)) G.banner = { text: `Roll too big for the vent: ${VENT_MAX} sheets or fewer`, t: 1.6, vent: true };
   p.walk = p.onGround && Math.hypot(p.vx, p.vz) > 0.8 ? p.walk + dt * 13 : 0;
@@ -737,13 +749,14 @@ function updatePlayer(dt) {
   for (let j = tj - 3; j <= tj + 3; j++) for (let i = ti - 3; i <= ti + 3; i++) if (G.seen[j] && i >= 0 && i < W && Math.hypot(i - ti, j - tj) < 3.4) G.seen[j][i] = true;
 
   p.cooldown -= dt; p.attack -= dt; p.invuln -= dt; p.throwCd -= dt;
-  if (pressed.attack && p.cooldown <= 0) { p.attack = 0.22; p.cooldown = p.knife ? 0.26 : 0.36; p.swing++; blip(180, 0.08, 'sawtooth', 200, 0.04); }
+  if ((pressed.attack || held.attack) && p.cooldown <= 0) { const tg = nearestEnemy(3.4); if (tg) faceTo(tg); // hold to keep swinging
+    p.attack = 0.22; p.cooldown = p.knife ? 0.26 : 0.36; p.swing++; blip(180, 0.08, 'sawtooth', 200, 0.04); }
   if (pressed.wrap && p.throwCd <= 0) {
     if (p.sheets < 1) say('No paper left to throw');
     else { // costs a sheet; leans towards the nearest creature in front
       p.sheets--; p.throwCd = 0.45;
-      let dx = p.fx, dz = p.fz, best = 11;
-      for (const e of G.enemies) { const ex = e.x - p.x, ez = e.z - p.z, d = Math.hypot(ex, ez); if (d < best && !e.wrap && (ex * p.fx + ez * p.fz) / d > 0.75 && sight(p.x, p.z, e.x, e.z)) { best = d; dx = ex / d; dz = ez / d; } }
+      const tg = nearestEnemy(11, true); if (tg) faceTo(tg);
+      const dx = p.fx, dz = p.fz;
       const m = new THREE.Mesh(PGEO.shot, M.paper); m.rotation.y = Math.atan2(dx, dz); scene.add(m);
       G.shots.push({ x: p.x + dx * 0.6, z: p.z + dz * 0.6, vx: dx * 17, vz: dz * 17, life: 0.65, mesh: m });
       blip(700, 0.12, 'triangle', -400, 0.04);
@@ -954,6 +967,8 @@ function present(dt) {
     HUNT.ring.material.color.setHex(hu.phase === 'lock' ? 0xff3020 : hu.phase === 'grab' ? 0xff8a30 : 0xffd24a);
     HUNT.beam.position.set(hu.x, 9, hu.z); HUNT.hand.position.set(hu.x, hu.phase === 'slam' ? 0.5 : 0.5 + 13 * Math.max(0, hu.timer) / 1.1, hu.z); HUNT.hand.rotation.y = camYaw;
   }
+  const tg = G.state === 'play' ? nearestEnemy(9) : null; TARGET.visible = !!tg;
+  if (tg) { TARGET.position.set(tg.x, 0.06, tg.z); TARGET.scale.setScalar(1 + Math.sin(t * 8) * 0.08); }
   M.glow.opacity = 0.22 + 0.08 * Math.sin(t * 4);
   M.ventLamp.color.setHex(p.sheets <= VENT_MAX ? 0x58e070 : 0xff4030);
   M.sewage.map.offset.y = -t * 0.25;
@@ -1116,7 +1131,7 @@ function overlay() {
     text('Emergency toilet paper, straight up the pipe.', LW / 2, 160 * big + 8, `800 ${Math.max(13, 17 * big)}px ${BODY}`, '#c9d8d3');
     if (Math.floor(now() * 2) % 2) { panel(LW / 2 - 190, LH - 76, 380, 40); text('Press Enter or tap to start your shift', LW / 2, LH - 55, `20px ${DISPLAY}`, '#f3efe2'); }
   } else if (G.state === 'play') drawHUD();
-  else if (G.state === 'brief') ticket(364, (cx, y, w) => {
+  else if (G.state === 'brief') ticket(384, (cx, y, w) => {
     const body = `600 ${w < 440 ? 12 : 14}px ${BODY}`, lines = [
       ['Orders ping your app. Accept with F or tap the list.', '#10201f'],
       ['Tips go in your pocket. They only count once you walk', '#10201f'],
@@ -1127,7 +1142,8 @@ function overlay() {
       [`Vents are shortcuts, but only fit ${VENT_MAX} sheets or fewer.`, '#5b6f6a'],
       ['Spend banked tips at the stores in the lobby corner.', '#10201f'],
       ['Reputation opens the gated pipes: mob, flood, high street.', '#5b6f6a'],
-      ['Whack X · wrap C · smoke V · drag to look around.', '#10201f']];
+      ['Attacks aim at the ringed creature. Hold Whack to keep', '#10201f'],
+      ['swinging. Drag the view, or slide off a button, to look.', '#5b6f6a']];
     text('HOW THE JOB WORKS', cx, y + 32, `800 13px ${BODY}`, '#d8432f');
     text('The Lobby', cx, y + 64, `34px ${DISPLAY}`, '#10201f');
     lines.forEach(([s, col], n) => s && text(s, cx, y + 104 + n * 20, body, col));

@@ -59,7 +59,9 @@ Progress (bank, reputation, purchases) is kept in the browser's local storage wh
 - Mob gnomes stop, wind up and lunge with a knife: 3 sheets, and they take the package. Beat one and it drops its knife.
 - Humans track you with a reticle, shoot four times (3 sheets each), then a hand comes down to grab you.
   Keep moving, or stand in a vent or cigar smoke until they lose you. Shots also kill creatures under them.
-- The camera rides behind the gnome; drag on the view to swing and tilt it. Movement is relative to the camera.
+- Attacks aim themselves at the nearest creature in view, marked with a red ring. Hold Whack to keep swinging.
+- The camera rides behind the gnome and follows where you run. Drag on the view to swing and tilt it; on a phone,
+  sliding your thumb off any action button does the same. Movement is relative to the camera.
 
 The map is generated from a seed in `generate()` in `game.js`: one depth-first maze per district, each starting behind its
 lobby pipe and never crossing into another, then loops, chambers, delivery points, gym ducts, vents and sewage.

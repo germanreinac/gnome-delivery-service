@@ -99,10 +99,11 @@ h1 span { color: var(--hat); }
   border-radius: 50%;
   padding: 0;
 }
-#btn-jump { right: 18px; }
-#btn-whack { right: 104px; bottom: 58px; border-color: var(--hat); }
-#btn-wrap { right: 18px; bottom: 104px; border-color: var(--paper); }
-#btn-smoke { right: 104px; bottom: 144px; border-color: var(--muted); }
+/* an arc under the right thumb: Whack biggest in the corner, the rest fanned around it */
+#btn-whack { right: 18px; bottom: 18px; width: 92px; height: 92px; font-size: 1.15rem; border-color: var(--hat); }
+#btn-jump { right: 122px; bottom: 14px; width: 72px; height: 72px; }
+#btn-wrap { right: 104px; bottom: 98px; width: 68px; height: 68px; border-color: var(--paper); }
+#btn-smoke { right: 22px; bottom: 122px; width: 68px; height: 68px; border-color: var(--muted); }
 .pad button.on { background: var(--pipe); }
 .pad button:focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
 @media (pointer: coarse) {
