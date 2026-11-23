@@ -1,81 +1,61 @@
 # Gnome Delivery Service
 
-A 3D sewer delivery game. You are a gnome courier with a roll of toilet paper roped to your back,
-running orders through a labyrinth of pipes and vents under the city.
+A top-down action game. You are a gnome courier with a roll of toilet paper roped to your back and a knife in your hand,
+working out of a lobby hung in a sewer cavern.
 
 ## Play
 
 Open `index.html` in a browser. No build step; three.js loads from a CDN.
-Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the single-pipe 3D run in git history.
+Earlier versions are kept for reference: the 2D side-scroller in `2d/`, and the pipe run and maze versions in git history.
 
 | Action | Keyboard | Touch |
 | --- | --- | --- |
 | Move | W A S D or arrows | Thumb stick |
 | Dash | Space | Dash |
-| Plunger whack | X or J | Whack |
+| Knife | X or J (hold to keep swinging) | Automatic when something is in reach; Knife button too |
 | Paper wrap | C or K | Wrap |
 | Use smoke | V or L | Smoke |
+| Swap smoke | Q or 1 to 4 | Tap the smoke's name |
 | Accept the next order | F or E | Tap the order list |
-| Swap smoke | Q, E or 1 to 4 | Tap the smoke's name |
 | Continue | Enter | Tap the screen |
 
-## The loop
+## The shape of it
 
-Push your luck: go out, earn, and decide after every drop whether to risk one more or walk home and bank it.
+The lobby is home: other couriers hanging about, the roll pallet, the stores. There are two ways out.
 
-1. **Lobby.** A safe common room where other couriers hang about. Orders ping your app; accept the ones you want
-   (F, or tap the list), up to three. Reload at the roll pallet. Spend at the stores in the corner.
-2. **The run.** Head out through one of the lobby's four pipes. Tips go in your **pocket**, not the bank.
-   Every delivery adds **heat**: creatures notice you sooner and chase harder, and past the mark on the heat bar
-   humans start hunting. There is no clock.
-3. **Cash out.** Walk back into the lobby and the pocket is banked, heat clears, and the sewers repopulate.
-   Get knocked out or grabbed first and the pocket is gone. The bank is always safe.
-4. **Spend.** The stores sell the pipe, cigar and joint, a bigger roll (16, then 20 sheets), the knife, and a map
-   of each district you have opened.
-5. **Go further.** Each delivery banked is a point of reputation (two for a back-room package).
-   Reputation opens the gated pipes.
+- **West, down the stairs: the Underworld.** A freshly generated run of big chambers stepping deeper each time.
+  Fight what lives there, pick up scrap, open stashes. The last chamber has a lift home and a way deeper:
+  bank what you carry, or push on to a harder level with everything still at risk.
+- **East, up the ramp: deliveries.** Accept orders in the lobby first (up to three), then climb the steel ducts under the
+  streets to the bathroom pipes that ordered. Each drop pays tips and reputation and adds heat; past a point humans
+  start hunting you from above. Covered ducts and cigar smoke hide you.
 
-| District | Opens at | Main threat | Tips |
-| --- | --- | --- | --- |
-| Rat Runs (north) | start | rats; the back room is here | x1 |
-| Mob Turf (east) | reputation 3 | mob gnomes with knives, and their den | x1.3 |
-| The Flood (south) | reputation 7 | sewage everywhere, cloglings | x1.6 |
-| High Street (west) | reputation 12 | heat climbs fast, so humans come quickly | x2 |
+What you carry, tips or scrap, only counts once you take the lift home. Get knocked out or caught and it is gone;
+the bank is safe. Scrap buys kit at the stores (smokes, a sharper knife); tips buy comfort (a bigger roll, quicker boots).
+Reputation makes better-paying orders appear. Progress is kept in the browser's local storage where available.
 
-Districts only join through the lobby, apart from vents, which cut between them for a roll of 6 sheets or fewer.
-Progress (bank, reputation, purchases) is kept in the browser's local storage where that is available.
+## The world
 
-## Mood and places
+Levels are height maps, not corridors: wide platforms at different heights over open air, joined by two-wide bridges
+with stairs on them. You can step up one stair and drop any distance. Chambers have pits, a raised dais with a stash on it,
+pillars, a back wall; some have a side room across a gap that only a dash clears. A pale strip marks every ledge.
+Fall off and you lose 2 sheets and are put back where you last stood. Creatures that go over the edge are gone for good.
 
-The look aims for cold, quiet dread: desaturated grey-blue, haze instead of black, shafts of light falling through street
-grates, long shadows, dust in the air, drips. The player's red hat is the one strong colour.
+## Fighting
 
-- Every district has open halls as landmarks, each lit by a big shaft and dressed for its owner.
-- Rat Runs: nests and bones. Mob Turf: crates, barrels and oil-drum fires, the only warm light out there.
-  The Flood: pouring pipes and ankle-deep water that slows you. High Street: far more grates overhead, whose light keeps
-  being cut off as people walk across them, and junk fallen from the street.
-- Service pipes run along the corridor walls, with the odd fat pipe crossing overhead.
-- If the device cannot keep up, the game drops the real-time shadows and resolution after a few seconds.
+- The roll is cargo, health and ammo: orders use 3 to 5 sheets, hits tear off 1 to 3, a paper wrap costs 1.
+  Hit with an empty roll and you are dragged home with empty pockets. Reload at the pallet in the lobby.
+- Knife: slash, slash, then a spin that hits all round and throws things back. Each swing steps in to connect and aims
+  itself at the nearest creature, marked with a red ring.
+- Dash is a short burst that cannot be hit and carries across gaps. Strike out of a dash for a lunge that hits hard.
+- Knock things off ledges: the spin, the lunge and the pipe's smoke ring all do it.
+- Rats and mob gnomes telegraph: a red ring closes in, then they lunge, and a lunge does not look where it is going.
+  Cockroaches nip on contact; cloglings hurt when they land on you.
+- Paper wrap cocoons a creature; strike the cocoon to bowl it into the others.
+- Smokes: cigarette (a decoy that runs off), pipe (a ring that shoves), cigar (a cloud that hides you),
+  joint (leaves creatures too mellow to bite). You start with the cigarette.
 
-## Tools and threats
+## Code
 
-- The roll is cargo, health and ammo: orders use 3 to 6 sheets, a bite or a dunk in sewage tears off 1 to 3,
-  a paper wrap costs 1. Vents only fit a roll of 6 sheets or fewer; creatures cannot follow you in.
-- Paper wrap cocoons a creature for a few seconds. Whack the cocoon to bowl it into the others.
-- Smokes (V to use, Q or 1 to 4 to swap, each with its own relight time): cigarette makes a gnome-shaped smoke decoy
-  that runs off; pipe blows a ring that shoves creatures back; cigar lays a cloud that hides you; joint leaves
-  creatures too mellow to bite. You start with the cigarette.
-- The back room hands out steroid packages for a gym duct in any open district. The duct is narrow, so the roll must
-  be 6 sheets or fewer to post it. Big pay, a lot of heat.
-- Mob gnomes stop, wind up and lunge with a knife: 3 sheets, and they take the package. Beat one and it drops its knife.
-- Humans track you with a reticle, shoot four times (3 sheets each), then a hand comes down to grab you.
-  Keep moving, or stand in a vent or cigar smoke until they lose you. Shots also kill creatures under them.
-- It plays as a top-down action game: a fixed overhead camera that never turns, so the stick maps straight onto the floor.
-- Dash is a short, fast burst. It crosses a sewage channel and you cannot be hurt during it.
-- Attacks aim themselves at the nearest creature in view, marked with a red ring. Hold Whack to keep swinging;
-  every third swing in a row is a heavy hit.
-- Rats and mob gnomes telegraph: they stop, a red ring closes in around them, then they lunge. They only hurt on the
-  lunge. Cockroaches nip on contact (1 sheet); cloglings hurt when they land on you.
-
-The map is generated from a seed in `generate()` in `game.js`: one depth-first maze per district, each starting behind its
-lobby pipe and never crossing into another, then loops, chambers, delivery points, gym ducts, vents and sewage.
+Everything is in `game.js`. `genHub()` and `genRun()` build levels as height maps; `buildWorld()` turns one into meshes;
+`step()` is the whole of the physics. `window.__gds.dev` exposes the generators for tinkering from the console.
